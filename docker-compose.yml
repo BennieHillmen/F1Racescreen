@@ -1,14 +1,42 @@
+# Werkt in Portainer zonder "build": de container gebruikt het standaard node-image
+# en haalt bij elke (her)start de nieuwste code uit GitHub.
 services:
   f1-race-display:
-    build: .
+    image: node:22-alpine
     container_name: f1-race-display
-    ports:
-      - "8080:8080"
+    working_dir: /app
     environment:
+      - PORT=8080
+      - DATA_DIR=/data
       - REFRESH_MINUTES=10
       - TZ=Europe/Amsterdam
+      - REPO_RAW=https://raw.githubusercontent.com/BennieHillmen/F1Racescreen/main
+    command:
+      - node
+      - -e
+      - |
+        (async () => {
+          const fs = require('fs');
+          fs.mkdirSync('/app/public', { recursive: true });
+          for (const f of ['server.js', 'public/index.html', 'public/circuits.json']) {
+            try {
+              const r = await fetch(process.env.REPO_RAW + '/' + f, { signal: AbortSignal.timeout(20000) });
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              fs.writeFileSync('/app/' + f, Buffer.from(await r.arrayBuffer()));
+              console.log('[setup] gedownload: ' + f);
+            } catch (e) {
+              if (!fs.existsSync('/app/' + f)) throw e;
+              console.log('[setup] offline, gebruik kopie: ' + f);
+            }
+          }
+          require('/app/server.js');
+        })().catch(e => { console.error('[setup] mislukt:', e.message); process.exit(1); });
+    ports:
+      - "8080:8080"
     volumes:
+      - f1app:/app
       - f1data:/data
     restart: unless-stopped
 volumes:
+  f1app:
   f1data:

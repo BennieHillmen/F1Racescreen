@@ -4,8 +4,12 @@ LED-matrix race display voor de iPad, bediend met de iPhone.
 
 ## Starten
 
+**Portainer (aanbevolen):** Stacks > Add stack > Repository, URL `https://github.com/BennieHillmen/F1Racescreen`, compose path `docker-compose.yml`. Of plak `portainer-stack.yml` in de Web editor. Er wordt niets gebouwd: de container gebruikt `node:22-alpine` en haalt bij elke start de nieuwste code uit deze repository. Updaten = container herstarten.
+
+**Zelf bouwen met Docker:**
+
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.build.yml up -d --build
 ```
 
 Open daarna op je thuisnetwerk (vervang het IP-adres door dat van de computer waarop Docker draait):
