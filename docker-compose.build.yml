@@ -3,7 +3,7 @@ services:
     build: .
     container_name: f1-race-display
     ports:
-      - "8080:8080"
+      - "8082:8080"
     environment:
       - REFRESH_MINUTES=10
       - TZ=Europe/Amsterdam

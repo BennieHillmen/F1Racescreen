@@ -32,7 +32,7 @@ services:
           require('/app/server.js');
         })().catch(e => { console.error('[setup] mislukt:', e.message); process.exit(1); });
     ports:
-      - "8080:8080"
+      - "8082:8080"
     volumes:
       - f1app:/app
       - f1data:/data

@@ -14,8 +14,8 @@ docker compose -f docker-compose.build.yml up -d --build
 
 Open daarna op je thuisnetwerk (vervang het IP-adres door dat van de computer waarop Docker draait):
 
-- iPad (display): `http://192.168.1.50:8080/#display`
-- iPhone (afstandsbediening): `http://192.168.1.50:8080/#remote`
+- iPad (display): `http://192.168.1.50:8082/#display`
+- iPhone (afstandsbediening): `http://192.168.1.50:8082/#remote`
 
 Tip voor de iPad: Safari > Deel > *Zet op beginscherm*, en zet Instellingen > Scherm > Automatisch vergrendelen op *Nooit*.
 
@@ -34,7 +34,7 @@ Tip voor de iPad: Safari > Deel > *Zet op beginscherm*, en zet Instellingen > Sc
 | `JOLPICA_URL` | `https://api.jolpi.ca/ergast/f1` | Bron voor de F1-gegevens |
 | `DATA_DIR` | `/data` | Map voor opgeslagen status |
 
-Direct verversen: `curl -X POST http://localhost:8080/api/refresh`
+Direct verversen: `curl -X POST http://localhost:8082/api/refresh`
 
 ## Let op
 
