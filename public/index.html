@@ -192,7 +192,7 @@ let CIRC={};fetch("circuits.json").then(r=>r.json()).then(j=>{CIRC=j}).catch(()=
 let DATA=BASE;
 
 const TEAM={mercedes:["MERCEDES","#27f4d2","MERCEDES"],ferrari:["FERRARI","#ff2338","FERRARI"],red_bull:["RED BULL","#3d7bff","RED BULL"],mclaren:["MCLAREN","#ff8a00","MCLAREN"],rb:["RACING BULLS","#8fb0ff","RB"],alpine:["ALPINE","#ff6fb5","ALPINE"],haas:["HAAS","#b6babd","HAAS"],audi:["AUDI","#ffffff","AUDI"],williams:["WILLIAMS","#3fb7ff","WILLIAMS"],aston_martin:["ASTON MARTIN","#1fbf7f","ASTON"],cadillac:["CADILLAC","#d9b23a","CADILLAC"]};
-const SCREENS=[["live","Live timing"],["next","Volgende sessie"],["weekend","Raceweekend"],["result","Laatste uitslag"],["drivers","Stand coureurs"],["teams","Stand teams"],["track","Circuit"],["calendar","Kalender"]];
+const SCREENS=[["live","Live timing"],["next","Volgende sessie"],["weekend","Raceweekend"],["sessions","Uitslag trainingen"],["result","Laatste uitslag"],["drivers","Stand coureurs"],["teams","Stand teams"],["track","Circuit"],["calendar","Kalender"]];
 const ALERTS=[["sc","Safety car","#28f08a"],["vsc","Virtual SC","#ffd21f"],["red","Rode vlag","#ff3a3a"],["yellow","Gele vlag","#ffd21f"],["green","Groene vlag","#28f08a"],["chequered","Finishvlag","#ffffff"],["drs","DRS enabled","#28f08a"],["start","Lights out","#ff3a3a"]];
 const SESS={FP1:"FP1",FP2:"FP2",FP3:"FP3",SQ:"SPRINT Q",SPR:"SPRINT",Q:"QUALI",R:"RACE"};
 const DUR={FP1:60,FP2:60,FP3:60,SQ:44,SPR:60,Q:60,R:120};
@@ -318,6 +318,15 @@ const drvInfo=code=>DATA.drv[code]||[code,"",""];
 /* ---------- SCREENS ---------- */
 function pages(n,per){return Math.max(1,Math.ceil(n/per))}
 const VIEW={
+sessions:{pages:()=>Math.max(1,(DATA.sessions||[]).reduce((n,s)=>n+pagesFor(s.rows,r=>r[1]),0)),draw(t,now,pg){const S=DATA.sessions||[];
+  if(!S.length){header("UITSLAG","TRAINING");text("NOG GEEN UITSLAGEN",W/2,44,C.white,1,"c");text("VERSCHIJNT NA AFLOOP",W/2,58,C.blue,1,"c");text("VAN ELKE SESSIE",W/2,70,C.blue,1,"c");footer("BRON: OPENF1",t,C.cyan);return}
+  let k=pg,s=S[0];for(const x of S){const n=pagesFor(x.rows,r=>r[1]);if(k<n){s=x;break}k-=n}
+  const P=pageRows(s.rows,k,r=>r[1]),q=s.code==="QUALI"||s.code==="SPRINT Q";header(s.code,P.a+"-"+P.b);text(s.gp,2,15,C.cyan);text("UITSLAG",W-3,15,C.white,1,"r");
+  text("P",2,25,C.blue);text("DRV",31,25,C.blue);text(s.race?"TIME":"BEST",56,25,C.blue);text("GAP",108,25,C.blue);text("LAPS",W-3,25,C.blue,1,"r");
+  P.rows.forEach(([r],i)=>{const y=35+i*14,[pos,code,col,fl,best,gap,laps,st]=r,info=drvInfo(code);rowBg(i,y,code);
+   text(pos<99?p2(pos):"--",2,y+3,C.white);rect(15,y+2,2,9,col||tc(info[2]));flag(fl||info[1],19,y+3);text(code,31,y+3,C.white);
+   text(st&&!best?st:best,56,y+3,st&&!best?C.grey:pos===1?C.purple:C.white);text(pos===1?"":String(gap).slice(0,10),108,y+3,C.white);text(laps,W-3,y+3,C.grey,1,"r")});
+  const f=s.rows[0];footer(S.length>1?"WEEKEND: "+S.slice().reverse().map(x=>x.code+" "+(x.rows[0]?x.rows[0][1]:"")).join("  "):"SNELSTE "+(f?f[8]+" "+f[4]:""),t,C.cyan)}},
 live:{pages:()=>LIVE&&LIVE.rows&&LIVE.rows.length?pagesFor(LIVE.rows,r=>r[1]):1,draw(t,now,pg){
   if(!LIVE||!LIVE.rows||!LIVE.rows.length){header("LIVE","");text("GEEN LIVE SESSIE",W/2,36,C.white,1,"c");const s=nextSession(now);if(s){text("VOLGENDE "+SESS[s.code],W/2,54,C.blue,1,"c");text(s.race[1],W/2,66,C.blue,1,"c");text(dayHm(s.start),W/2,78,C.white,1,"c")}footer("LIVE DATA VIA JE F1-ACCOUNT  -  ZIE INSTELLINGEN",t,C.cyan);return}
   const L=LIVE,race=L.mode==="race",P=pageRows(L.rows,pg,r=>r[1]);
@@ -424,7 +433,7 @@ function compose(now){buf.fill(null);const t=now;const a=alertActive(now);if(a){
   const list=(ctl.enabled&&ctl.enabled.length?ctl.enabled:DEF.enabled).filter(k=>VIEW[k]);let key,pg;
   const liveOn=LIVE&&LIVE.active&&now-(LIVE.rx||0)<120000;
   if((ctl.screen==="auto"||!VIEW[ctl.screen])&&liveOn){key="live";const n=VIEW.live.pages();pg=Math.floor(now/6000)%n}
-  else if(ctl.screen==="auto"||!VIEW[ctl.screen]){const iv=Math.max(5,ctl.interval||20)*1000;key=list[Math.floor(now/iv)%list.length];const n=VIEW[key].pages();pg=Math.floor((now%iv)/(iv/n))%n}
+  else if(ctl.screen==="auto"||!VIEW[ctl.screen]){const iv=Math.max(5,ctl.interval||20)*1000,slot=Math.floor(now/iv);key=list[slot%list.length];const n=VIEW[key].pages(),pd=Math.max(4000,iv/n),per=Math.max(1,Math.floor(iv/pd));pg=(Math.floor(slot/list.length)*per+Math.floor((now%iv)/pd))%n}
   else{key=ctl.screen;const n=VIEW[key].pages();pg=Math.floor(now/6000)%n}
   VIEW[key].draw(t,now,pg)}
 

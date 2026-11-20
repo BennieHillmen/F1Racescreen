@@ -10,6 +10,7 @@ const path = require('path');
 const PORT = +process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const API = (process.env.JOLPICA_URL || 'https://api.jolpi.ca/ergast/f1').replace(/\/$/, '');
+const OPENF1 = (process.env.OPENF1_URL || 'https://api.openf1.org/v1').replace(/\/$/, '');
 const REFRESH_MIN = Math.max(2, +process.env.REFRESH_MINUTES || 10);
 const PUB = path.join(__dirname, 'public');
 const { LiveClient, parseToken, tokenInfo, summarize } = require('./live');
@@ -25,6 +26,8 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const LIVERES_FILE = path.join(DATA_DIR, 'liveresult.json');
 let config = readJson(CONFIG_FILE, {});
 let liveResult = readJson(LIVERES_FILE, null);
+const SESS_FILE = path.join(DATA_DIR, 'sessions.json');
+let sessCache = readJson(SESS_FILE, { list: [] });
 const saveConfig = () => fs.writeFileSync(CONFIG_FILE, JSON.stringify(config));
 
 /* ---------- vertaaltabellen ---------- */
@@ -107,8 +110,52 @@ async function refresh() {
   broadcast('data', pubData());
   console.log(`[f1] bijgewerkt: seizoen ${season}, ${races.length} races, stand na ronde ${data.standRound}`);
 }
+/* ---------- uitslagen van trainingen en kwalificatie (OpenF1, gratis na afloop) ---------- */
+const SNAME = { 'Practice 1': 'FP1', 'Practice 2': 'FP2', 'Practice 3': 'FP3', Qualifying: 'QUALI', 'Sprint Qualifying': 'SPRINT Q', 'Sprint Shootout': 'SPRINT Q', Sprint: 'SPRINT', Race: 'RACE' };
+const lapStr = x => { if (x == null || isNaN(x)) return ''; const m = Math.floor(x / 60), s = (x - m * 60).toFixed(3); return m ? m + ':' + s.padStart(6, '0') : s; };
+const lastOf = v => Array.isArray(v) ? [...v].reverse().find(x => x != null) : v;
+async function of1(p) {
+  const r = await fetch(OPENF1 + p, { headers: { 'User-Agent': 'f1-race-display/1.0', Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) throw new Error(`${p} -> HTTP ${r.status}`);
+  return r.json();
+}
+async function refreshSessions() {
+  const year = (f1 && f1.season) || new Date().getUTCFullYear(), now = Date.now();
+  const all = await of1('/sessions?year=' + year);
+  const done = all.filter(s => Date.parse(s.date_end || s.date_start) + 10 * 60000 < now && s.session_name !== 'Race' && !/Day \d/.test(s.session_name))
+    .sort((a, b) => Date.parse(a.date_start) - Date.parse(b.date_start));
+  if (!done.length) return;
+  const mk = done[done.length - 1].meeting_key, ms = done.filter(s => s.meeting_key === mk), list = [];
+  for (const s of ms) {
+    const old = (sessCache.list || []).find(x => x.key === s.session_key);
+    if (old && old.final) { list.push(old); continue; }
+    const res = await of1('/session_result?session_key=' + s.session_key);
+    if (!Array.isArray(res) || !res.length) { if (old) list.push(old); continue; }
+    const drv = await of1('/drivers?session_key=' + s.session_key).catch(() => []);
+    const dmap = {}; for (const d of drv) dmap[d.driver_number] = d;
+    const race = s.session_type === 'Race';
+    const rows = res.map(x => {
+      const d = dmap[x.driver_number] || {}, code = d.name_acronym || String(x.driver_number);
+      const known = f1 && f1.drv && f1.drv[code];
+      const st = x.dsq ? 'DSQ' : x.dns ? 'DNS' : x.dnf ? 'DNF' : '';
+      const g = lastOf(x.gap_to_leader);
+      return [+x.position || 99, code, d.team_colour ? '#' + d.team_colour : '', (known && known[1]) || d.country_code || '',
+        race ? lapStr(lastOf(x.duration)) : lapStr(lastOf(x.duration)), typeof g === 'number' ? (g ? '+' + g.toFixed(3) : '') : (g || ''),
+        +x.number_of_laps || 0, st, String(d.last_name || (known && known[0]) || code).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()];
+    }).sort((a, b) => a[0] - b[0]);
+    const t = Date.parse(s.date_start), race0 = f1 && f1.races.find(r => { const rt = Date.parse(r[7].split(' ')[4] + ':00Z'); return Math.abs(rt - t) < 4 * 86400000; });
+    list.push({ key: s.session_key, code: SNAME[s.session_name] || s.session_name.toUpperCase(), race, gp: race0 ? race0[1] : String(s.location || s.country_name || '').toUpperCase(),
+      end: Date.parse(s.date_end || s.date_start), rows, final: now - Date.parse(s.date_end || s.date_start) > 3 * 3600000 });
+  }
+  if (!list.length) return;
+  sessCache = { meeting: mk, list };
+  fs.writeFileSync(SESS_FILE, JSON.stringify(sessCache));
+  broadcast('data', pubData());
+  console.log(`[f1] sessie-uitslagen: ${list.map(x => x.code).join(', ')} (${list[0].gp})`);
+}
 async function refreshLoop() {
   try { await refresh(); } catch (e) { console.error('[f1] ophalen mislukt:', e.message); }
+  try { await refreshSessions(); } catch (e) { console.error('[f1] sessie-uitslagen ophalen mislukt:', e.message); }
   setTimeout(refreshLoop, REFRESH_MIN * 60000);
 }
 
@@ -130,8 +177,9 @@ const pitLane = num => { const p = ((live.st.PitLaneTimeCollection || {}).PitTim
 
 function pubData() {
   if (!f1) return null;
-  if (liveResult && liveResult.at > (f1.resultAt || 0)) return { ...f1, result: liveResult, drv: { ...(liveResult.drv || {}), ...f1.drv } };
-  return f1;
+  const base = { ...f1, sessions: (sessCache.list || []).slice().sort((a, b) => b.end - a.end) };
+  if (liveResult && liveResult.at > (f1.resultAt || 0)) return { ...base, result: liveResult, drv: { ...(liveResult.drv || {}), ...f1.drv } };
+  return base;
 }
 const tokenOk = () => !!(config.token && (!config.exp || config.exp > Date.now()));
 function sessionWindow(now) {

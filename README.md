@@ -22,6 +22,7 @@ Tip voor de iPad: Safari > Deel > *Zet op beginscherm*, en zet Instellingen > Sc
 ## Wat het doet
 
 - Haalt elke 10 minuten de kalender, de standen en de laatste uitslag op bij de Jolpica F1 API (opvolger van Ergast).
+- Haalt na afloop van elke training, sprint en kwalificatie de uitslag op bij OpenF1 (gratis, geen account nodig).
 - De iPhone stuurt schermkeuze, alerts (safety car, vlaggen, inhaalacties, pitstops, berichten) en helderheid naar de iPad via de server (Server-Sent Events).
 - De laatste instellingen en gegevens worden bewaard in het volume `f1data`.
 
@@ -40,6 +41,7 @@ Zonder gekoppeld account, of als de sessie verlopen is (meestal na ongeveer een 
 |---|---|---|
 | `PORT` | `8080` | Poort in de container |
 | `REFRESH_MINUTES` | `10` | Hoe vaak F1-gegevens worden opgehaald |
+| `OPENF1_URL` | `https://api.openf1.org/v1` | Bron voor uitslagen van trainingen en kwalificatie |
 | `JOLPICA_URL` | `https://api.jolpi.ca/ergast/f1` | Bron voor de F1-gegevens |
 | `DATA_DIR` | `/data` | Map voor opgeslagen status |
 | `SETTINGS_PIN` | – | Pincode voor koppelen/ontkoppelen op de instellingenpagina |
