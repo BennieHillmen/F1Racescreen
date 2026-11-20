@@ -121,9 +121,11 @@ setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 25000);
 /* ---------- F1.com live timing (alleen met ingesteld account) ---------- */
 const AUTO_DEF = { sc: true, vsc: true, red: true, green: true, yellow: false, start: true, finish: true, overtake: true };
 const DURS = { FP1: 60, FP2: 60, FP3: 60, SQ: 44, SPR: 60, Q: 60, R: 120 };
-const live = new LiveClient(onLive);
+const delayMs = () => Math.min(300, Math.max(0, +((state || {}).delay) || 0)) * 1000;
+const live = new LiveClient(onLive, console.log, delayMs);
+const sumNow = () => summarize(live.st, f1 && f1.drv, delayMs());
 let liveSum = null, sumTimer = null, connecting = false, lastAttempt = 0;
-let prevTrack = null, prevStatus = null, prevPos = null, lastOT = 0;
+let prevTrack = null, prevStatus = null, prevPos = null, lastOT = 0, lastFav = 0, prevStints = null;
 
 function pubData() {
   if (!f1) return null;
@@ -168,6 +170,14 @@ function autoAlert(kind, a) {
   broadcast('state', state);
   console.log('[live] automatische melding:', a.type);
 }
+function favAlert(a) {
+  if (!state || !state.fav || state.favAlerts === false) return;
+  const lap = +((live.st.LapCount || {}).CurrentLap) || null;
+  state = { ...state, alert: { lap, ...a, ts: Date.now(), auto: true, fav: true } };
+  fs.writeFile(STATE_FILE, JSON.stringify(state), () => {});
+  broadcast('state', state);
+  console.log('[live] melding favoriet:', a.type, a.driver);
+}
 function storeLiveResult(sum) {
   if (!sum || !sum.rows.length) return;
   const lines = (live.st.TimingData || {}).Lines || {}, dl = live.st.DriverList || {};
@@ -189,7 +199,7 @@ function onLive(topic) {
   const st = live.st;
   if (topic === 'init') {
     prevTrack = String((st.TrackStatus || {}).Status || ''); prevStatus = (st.SessionStatus || {}).Status || '';
-    prevPos = {}; for (const r of summarize(st, f1 && f1.drv).rows) prevPos[r[1]] = r;
+    prevPos = {}; prevStints = {}; for (const r of sumNow().rows) { prevPos[r[1]] = r; prevStints[r[1]] = r[10]; }
   } else if (topic === 'TrackStatus') {
     const c = String((st.TrackStatus || {}).Status || '');
     if (c !== prevTrack) {
@@ -201,17 +211,39 @@ function onLive(topic) {
       else if (c === '1' && ['4', '5', '6', '7'].includes(was)) autoAlert('green', { type: 'green', dur: 10 });
     }
   } else if (topic === 'SessionStatus') {
-    const s = (st.SessionStatus || {}).Status || '', sum = summarize(st, f1 && f1.drv);
+    const s = (st.SessionStatus || {}).Status || '', sum = sumNow();
     if (s !== prevStatus) {
       if (s === 'Started' && sum.mode === 'race' && prevStatus !== 'Aborted') autoAlert('start', { type: 'start', dur: 9 });
       if (s === 'Finished') { autoAlert('finish', { type: 'chequered', dur: 20 }); storeLiveResult(sum); }
       if (s === 'Finalised' || s === 'Ends') storeLiveResult(sum);
       prevStatus = s;
     }
+  } else if (topic === 'TimingAppData') {
+    const fav = state && state.fav, sum = sumNow();
+    if (fav && sum.mode === 'race' && prevStints) {
+      const r = sum.rows.find(x => x[1] === fav);
+      if (r && prevStints[fav] != null && r[10] > prevStints[fav] && r[10] > 1) {
+        setTimeout(() => { const s2 = sumNow(), r2 = s2.rows.find(x => x[1] === fav) || r;
+          favAlert({ type: 'pit', driver: fav, name: r2[9], tyre: r2[6] || '', stops: r2[10] - 1, dur: 8 }); }, 2500);
+      }
+      for (const x of sum.rows) prevStints[x[1]] = x[10];
+    }
   } else if (topic === 'TimingData') {
-    const sum = summarize(st, f1 && f1.drv);
+    const sum = sumNow();
     if (sum.mode === 'race' && sum.rows.length) {
       const pos = {}; for (const r of sum.rows) pos[r[1]] = r;
+      const fav = state && state.fav, F = fav && pos[fav], PF = fav && prevPos && prevPos[fav];
+      if (F && PF && F[0] !== PF[0] && (st.SessionStatus || {}).Status === 'Started' && ['1', '2'].includes(prevTrack)
+        && F[5] !== 'PIT' && PF[5] !== 'PIT' && F[5] !== 'OUT' && sum.lap[0] >= 1 && Date.now() - lastFav > 5000) {
+        lastFav = Date.now(); lastOT = Date.now();
+        if (F[0] < PF[0]) {
+          const o = sum.rows.find(x => x[0] === F[0] + 1 && prevPos[x[1]] && prevPos[x[1]][0] === F[0]);
+          favAlert({ type: 'overtake', driver: fav, name: F[9], pos: F[0], passed: o ? o[1] : null, passedName: o ? o[9] : '', colour: F[2], dur: 7 });
+        } else {
+          const o = sum.rows.find(x => x[0] === PF[0] && x[1] !== fav);
+          favAlert({ type: 'lost', driver: fav, name: F[9], pos: F[0], by: o ? o[1] : null, byName: o ? o[9] : '', colour: F[2], dur: 7 });
+        }
+      }
       if (prevPos && (st.SessionStatus || {}).Status === 'Started' && prevTrack === '1' && sum.lap[0] >= 2 && Date.now() - lastOT > 12000) {
         for (const r of sum.rows) {
           const was = prevPos[r[1]];
@@ -230,7 +262,8 @@ function onLive(topic) {
 }
 function publishLive() {
   if (!live.connected) { if (liveSum) { liveSum = null; broadcast('live', null); } return; }
-  const sum = summarize(live.st, f1 && f1.drv);
+  const sum = sumNow();
+  sum.delay = delayMs() / 1000;
   sum.active = sum.rows.length > 0 && ['Started', 'Aborted', 'Finished', 'Suspended'].includes(sum.status);
   sum.at = Date.now();
   liveSum = sum; broadcast('live', sum);
@@ -270,7 +303,7 @@ async function settingsApi(req, res, p) {
     if (!config.token) return sendJson(res, 400, { error: 'Nog geen F1-account gekoppeld.' });
     if (live.connected) return sendJson(res, 200, { ok: true, msg: 'Verbonden: live timing loopt al.' });
     const t = new LiveClient(() => {}, () => {});
-    try { await t.connect(config.token); const n = Object.keys(t.st).length; t.close(); return sendJson(res, 200, { ok: true, msg: `Verbinding gelukt, ${n} datastromen ontvangen.` }); }
+    try { await t.connect(config.token); const n = t.initTopics; t.close(); return sendJson(res, 200, { ok: true, msg: `Verbinding gelukt, ${n} datastromen ontvangen.` }); }
     catch (e) { t.close(); return sendJson(res, 502, { error: 'Verbinding mislukt: ' + e.message }); }
   }
   return sendJson(res, 404, { error: 'onbekend' });

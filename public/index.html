@@ -103,6 +103,16 @@ input[type=range]{width:100%;accent-color:var(--acc);min-height:44px}
   </div>
 
   <div class="card">
+    <h2>Tijdens een race</h2>
+    <label class="f">Vertraging van je stream</label>
+    <p class="hint" style="margin-top:0">Live data loopt vaak voor op tv of F1 TV. Stel de vertraging zo in dat het display gelijk loopt met je beeld.</p>
+    <div class="chips" id="delays"></div>
+    <label class="f" for="fav">Favoriete coureur</label>
+    <select id="fav"></select>
+    <div class="row"><span>Meldingen voor favoriet<br><small style="color:var(--mute)">Inhalen, positie verliezen en pitstops</small></span><input type="checkbox" class="sw" id="favAl" checked></div>
+  </div>
+
+  <div class="card">
     <h2>Race alerts</h2>
     <p class="hint">Vlaggen en meldingen vullen het display. Kies eerst hoe lang.</p>
     <div class="chips" id="durs"></div>
@@ -284,7 +294,7 @@ UAE:["rrggggggg","rrggggggg","rrwwwwwww","rrwwwwwww","rrddddddd","rrddddddd"]};
 
 /* ---------- PIXEL BUFFER ---------- */
 const W=176,H=120;
-const C={blue:"#4f8dff",white:"#eef3ff",cyan:"#3fd8ff",green:"#28f08a",red:"#ff3030",yellow:"#ffd21f",orange:"#ff8a1f",purple:"#c45cff",grey:"#6f7890",row:"#1238b8",dimG:"#0f5a25",dimR:"#6a0d0d",dimY:"#6a5200",dimP:"#3d1466"};
+const C={blue:"#4f8dff",white:"#eef3ff",cyan:"#3fd8ff",green:"#28f08a",red:"#ff3030",yellow:"#ffd21f",orange:"#ff8a1f",purple:"#c45cff",grey:"#6f7890",row:"#1238b8",dimG:"#0f5a25",dimR:"#6a0d0d",dimY:"#6a5200",dimP:"#3d1466",favBg:"#7a5200"};
 let buf=new Array(W*H).fill(null);
 const px=(x,y,c)=>{x=Math.round(x);y=Math.round(y);if(x>=0&&x<W&&y>=0&&y<H)buf[y*W+x]=c};
 function rect(x,y,w,h,c){for(let j=0;j<h;j++)for(let i=0;i<w;i++)px(x+i,y+j,c)}
@@ -294,6 +304,11 @@ const tw=(s,sc=1)=>{s=norm(s);return s.length?s.length*6*sc-sc:0};
 function text(s,x,y,c,sc=1,al="l"){s=norm(s);const w=tw(s,sc);if(al==="c")x=Math.round(x-w/2);else if(al==="r")x=x-w;
   for(const ch of s){const g=G[ch];if(g){for(let r=0;r<7;r++)for(let k=0;k<5;k++)if(g[r][k]==="1")rect(x+k*sc,y+r*sc,sc,sc,c)}x+=6*sc}}
 function flag(code,x,y){const f=FLAGS[code];if(!f)return;for(let r=0;r<6;r++)for(let k=0;k<9;k++)px(x+k,y+r,FC[f[r][k]])}
+function rowBg(i,y,code,h=13){if(code&&code===ctl.fav)rect(2,y,W-4,h,C.favBg);else if(i%2===0)rect(2,y,W-4,h,C.row)}
+function pagesFor(all,codeOf){const has=ctl.fav&&all.some(r=>codeOf(r)===ctl.fav);return Math.max(1,Math.ceil(all.length/(has?4:5)))}
+function pageRows(all,pg,codeOf){const fi=ctl.fav?all.findIndex(r=>codeOf(r)===ctl.fav):-1,per=fi>=0?4:5,n=Math.max(1,Math.ceil(all.length/per)),p=pg%n;
+  const rows=all.slice(p*per,p*per+per).map((r,i)=>[r,p*per+i]);if(fi>=0){if(rows.some(x=>x[1]===fi)){const e=all[p*per+per];if(e)rows.push([e,p*per+per])}else rows.push([all[fi],fi])}
+  return{rows,a:p*per+1,b:Math.min(all.length,p*per+per)}}
 function header(l,r,c=C.blue,lc=C.red){text(l,W*0.36,2,c,1,"c");if(r)text(r,W*0.7,2,c,1,"c");hline(11,lc)}
 function footer(s,t,c=C.blue){hline(106,c,true);const w=tw(s);if(w<=W-4){text(s,2,110,c);return}
   const span=w+40,off=Math.floor(t/45)%span;text(s,W-off,110,c);if(W-off+span<W)text(s,W-off+span,110,c)}
@@ -303,21 +318,21 @@ const drvInfo=code=>DATA.drv[code]||[code,"",""];
 /* ---------- SCREENS ---------- */
 function pages(n,per){return Math.max(1,Math.ceil(n/per))}
 const VIEW={
-live:{pages:()=>LIVE&&LIVE.rows&&LIVE.rows.length?pages(LIVE.rows.length,5):1,draw(t,now,pg){
+live:{pages:()=>LIVE&&LIVE.rows&&LIVE.rows.length?pagesFor(LIVE.rows,r=>r[1]):1,draw(t,now,pg){
   if(!LIVE||!LIVE.rows||!LIVE.rows.length){header("LIVE","");text("GEEN LIVE SESSIE",W/2,36,C.white,1,"c");const s=nextSession(now);if(s){text("VOLGENDE "+SESS[s.code],W/2,54,C.blue,1,"c");text(s.race[1],W/2,66,C.blue,1,"c");text(dayHm(s.start),W/2,78,C.white,1,"c")}footer("LIVE DATA VIA JE F1-ACCOUNT  -  ZIE INSTELLINGEN",t,C.cyan);return}
-  const L=LIVE,race=L.mode==="race",rows=L.rows.slice(pg*5,pg*5+5);
+  const L=LIVE,race=L.mode==="race",P=pageRows(L.rows,pg,r=>r[1]);
   header(L.status==="Finished"||L.status==="Finalised"?"FINISH":"LIVE",race&&L.lap&&L.lap[1]?"L"+L.lap[0]+"/"+L.lap[1]:(L.remaining||""));
   text(L.gp||"",2,15,C.cyan);text(L.sess||"",W-3,15,C.white,1,"r");
   const gx=race?86:56;text("P",2,25,C.blue);text("DRV",31,25,C.blue);if(race)text("+/-",56,25,C.blue);text(race?"INT":L.mode==="quali"?"BEST":"GAP",gx,25,C.blue);text("TYRE",W-3,25,C.blue,1,"r");
   const TY={S:C.red,M:C.yellow,H:C.white,I:C.green,W:C.blue};
-  rows.forEach((r,i)=>{const y=35+i*14,[pos,code,col,fl,dl,gap,ty,tl]=r,info=drvInfo(code);if(i%2===0)rect(2,y,W-4,13,C.row);
+  P.rows.forEach(([r],i)=>{const y=35+i*14,[pos,code,col,fl,dl,gap,ty,tl]=r,info=drvInfo(code);rowBg(i,y,code);
    text(p2(pos),2,y+3,C.white);rect(15,y+2,2,9,col||tc(info[2]));flag(fl||info[1],19,y+3);text(code,31,y+3,C.white);
    if(race&&dl!=null)text(dl>0?"+"+dl:dl<0?String(dl):"0",56,y+3,dl>0?C.green:dl<0?C.red:C.grey);
    const g=String(gap||"").slice(0,9);text(g,gx,y+3,g==="PIT"?C.yellow:g==="OUT"?C.grey:C.white);
    if(ty){text(ty,148,y+3,TY[ty]||C.white);text(tl,W-3,y+3,C.white,1,"r")}});
   const TS={"2":["YELLOW FLAG",C.yellow],"4":["SAFETY CAR",C.yellow],"5":["RED FLAG",C.red],"6":["VIRTUAL SAFETY CAR",C.yellow],"7":["VSC ENDING",C.yellow]};
   const msgs=[];const tsm=TS[L.track&&L.track.code];if(tsm)msgs.push(tsm);
-  if(L.rcm&&L.rcm.text&&Date.now()-Date.parse(L.rcm.utc+(/Z$/.test(L.rcm.utc)?"":"Z"))<180000)msgs.push([L.rcm.text,C.white]);
+  if(L.rcm&&L.rcm.text&&Date.now()-(L.delay||0)*1000-Date.parse(L.rcm.utc+(/Z$/.test(L.rcm.utc)?"":"Z"))<180000)msgs.push([L.rcm.text,C.white]);
   if(race){let best=null;for(let i=1;i<Math.min(10,L.rows.length);i++){const v=parseFloat(String(L.rows[i][5]).replace("+",""));if(v>0&&v<1&&(!best||v<best[0]))best=[v,L.rows[i-1][1],L.rows[i][1]]}if(best)msgs.push(["BATTLE "+best[1]+" "+best[2]+" "+best[0].toFixed(3),C.cyan])}
   if(L.weather&&L.weather.air)msgs.push(["AIR "+Math.round(L.weather.air)+"C  TRACK "+Math.round(L.weather.track)+"C"+(L.weather.rain?"  REGEN":""),C.cyan]);
   const m=msgs.length?msgs[Math.floor(t/6000)%msgs.length]:["F1 LIVE TIMING",C.cyan];footer(m[0],t,m[1])}},
@@ -338,17 +353,17 @@ weekend:{pages:()=>1,draw(t,now){const s=nextSession(now)||{race:DATA.races[DATA
    if(!done&&!live){const m=Math.round((q.start-now)/60000);st=m>=1440?Math.floor(m/1440)+"D "+Math.floor(m%1440/60)+"U":m>=60?Math.floor(m/60)+"U "+p2(m%60):m+" MIN"}
    text(st,W-5,y+3,c,1,"r")});
   const d=new Date(now);footer("NU "+dmy(now)+" "+hm(now)+"  LOKALE TIJD",t,C.cyan)}},
-result:{pages:()=>pages(DATA.result.rows.length,5),draw(t,now,pg){const R=DATA.result,rows=R.rows.slice(pg*5,pg*5+5);header("UITSLAG",(pg*5+1)+"-"+(pg*5+rows.length));
+result:{pages:()=>pagesFor(DATA.result.rows,r=>r[0]),draw(t,now,pg){const R=DATA.result,P=pageRows(R.rows,pg,r=>r[0]);header("UITSLAG",P.a+"-"+P.b);
   text(R.gp,2,15,C.cyan);text(R.sess,W-3,15,C.white,1,"r");text("P",2,25,C.blue);text("DRV",31,25,C.blue);text("+/-",56,25,C.blue);text("GAP",86,25,C.blue);text("PTS",W-3,25,C.blue,1,"r");
-  rows.forEach((w,i)=>{const y=35+i*14,pos=pg*5+i+1,[code,grid,laps,gap,pts,fl]=w,info=drvInfo(code);if(i%2===0)rect(2,y,W-4,13,C.row);
+  P.rows.forEach(([w,idx],i)=>{const y=35+i*14,pos=idx+1,[code,grid,laps,gap,pts,fl]=w,info=drvInfo(code);rowBg(i,y,code);
    text(p2(pos),2,y+3,C.white);rect(15,y+2,2,9,tc(info[2]));flag(info[1],19,y+3);text(code,31,y+3,C.white);
    const dl=grid?grid-pos:0;text(dl>0?"+"+dl:dl<0?String(dl):"0",56,y+3,dl>0?C.green:dl<0?C.red:C.grey);
    const lapsDown=R.laps-laps;text(pos===1?"WINNER":w[6]==="DNF"?"DNF":lapsDown>0?"+"+lapsDown+(lapsDown>1?" LAPS":" LAP"):gap,86,y+3,C.white);
    if(fl)rect(148,y+5,3,3,C.purple);if(pts)text(pts,W-3,y+3,C.yellow,1,"r")});
   const s=nextSession(now);footer(s?"NEXT "+SESS[s.code]+" "+s.race[1]+" "+dayHm(s.start):"SEIZOEN AFGELOPEN",t,C.cyan)}},
-drivers:{pages:()=>pages(DATA.drivers.length,5),draw(t,now,pg){const D=DATA.drivers,rows=D.slice(pg*5,pg*5+5),lead=D[0][1];header("STAND",(pg*5+1)+"-"+(pg*5+rows.length));
+drivers:{pages:()=>pagesFor(DATA.drivers,r=>r[0]),draw(t,now,pg){const D=DATA.drivers,P=pageRows(D,pg,r=>r[0]),lead=D[0][1];header("STAND",P.a+"-"+P.b);
   text("COUREURS",2,15,C.cyan);text("NA R"+DATA.standRound,W-3,15,C.white,1,"r");text("P",2,25,C.blue);text("DRV",31,25,C.blue);text("TEAM",56,25,C.blue);text("PTS",W-3,25,C.blue,1,"r");
-  rows.forEach((w,i)=>{const y=35+i*14,pos=pg*5+i+1,[code,pts]=w,info=drvInfo(code);if(i%2===0)rect(2,y,W-4,13,C.row);
+  P.rows.forEach(([w,idx],i)=>{const y=35+i*14,pos=idx+1,[code,pts]=w,info=drvInfo(code);rowBg(i,y,code);
    text(p2(pos),2,y+3,C.white);rect(15,y+2,2,9,tc(info[2]));flag(info[1],19,y+3);text(code,31,y+3,C.white);text((TEAM[info[2]]||["","",""])[2],56,y+3,C.grey);
    if(pos>1)text("-"+(lead-pts),148,y+3,C.red,1,"r");text(pts,W-3,y+3,C.white,1,"r")});
   footer("LEIDER "+drvInfo(D[0][0])[0]+"  +"+(D[0][1]-D[1][1])+" PTN OP "+drvInfo(D[1][0])[0],t,C.cyan)}},
@@ -388,7 +403,9 @@ function drawAlert(a,t){const lap=a.lap?"LAP "+a.lap:"";
     header("FINISH","",C.white,C.white);text("CHEQUERED",W/2,44,C.white,2,"c");text("FLAG",W/2,64,C.white,1,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
   case"overtake":{header("OVERTAKE","",C.blue,C.blue);const nm=a.name||drvInfo(a.driver)[0],sc=tw(nm,2)>W-8?1:2;text(nm,6,24,C.blue,sc);text("~ P"+a.pos,14,56,C.green,2);rect(14+tw("~ P"+a.pos,2)+8,60,14,7,a.colour||tc(drvInfo(a.driver)[2]));
     hline(104,C.blue);if(a.passed)text("PASSED "+(a.passedName||drvInfo(a.passed)[0]),2,110,C.blue);break}
-  case"pit":{header("PIT STOP","",C.yellow,C.yellow);text(drvInfo(a.driver)[0],W/2,30,C.white,2,"c");const TY={S:["SOFT",C.red],M:["MEDIUM",C.yellow],H:["HARD",C.white],I:["INTER",C.green],W:["WET",C.blue]}[a.tyre||"M"];
+  case"lost":{header("POSITION LOST","",C.red,C.red);const nm=a.name||drvInfo(a.driver)[0];text(nm,6,24,C.white,tw(nm,2)>W-8?1:2);text("~ P"+a.pos,14,56,C.red,2);rect(14+tw("~ P"+a.pos,2)+8,60,14,7,a.colour||tc(drvInfo(a.driver)[2]));hline(104,C.red);if(a.byName)text("PASSED BY "+a.byName,2,110,C.red);break}
+  case"pit":{header("PIT STOP","",C.yellow,C.yellow);text(a.name||drvInfo(a.driver)[0],W/2,30,C.white,2,"c");const TY={S:["SOFT",C.red],M:["MEDIUM",C.yellow],H:["HARD",C.white],I:["INTER",C.green],W:["WET",C.blue]}[a.tyre];
+    if(!TY){text(a.stops?"STOP "+a.stops:"IN DE PITS",W/2,60,C.yellow,2,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
     text("NAAR",W/2-40,62,C.grey,1,"r");text(TY[0],W/2-28,58,TY[1],2);hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
   case"fastest":{header("FASTEST LAP","",C.purple,C.purple);text(drvInfo(a.driver)[0],W/2,30,C.white,2,"c");if(a.time)text(a.time,W/2,58,C.purple,2,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
   case"msg":{header("BERICHT","",C.cyan,C.cyan);const words=norm(a.text||"").split(/\s+/).filter(Boolean),lines=[];let cur="";for(const w of words){const n=cur?cur+" "+w:w;if(n.length>14&&cur){lines.push(cur);cur=w}else cur=n}if(cur)lines.push(cur);
@@ -451,10 +468,16 @@ function startDisplay(){const cv=document.getElementById("led"),gl=document.getE
 let remoteInit=false;
 function startRemote(){const prev=document.getElementById("prev");loop=setInterval(()=>{compose(Date.now());paintSmall(prev)},150);if(remoteInit)return;remoteInit=true;
   const $=id=>document.getElementById(id);
-  const sel=()=>{$("auto").checked=ctl.screen==="auto";for(const b of $("screens").children)b.classList.toggle("sel",ctl.screen===b.dataset.k);for(const b of $("ivals").children)b.classList.toggle("sel",+b.dataset.v===ctl.interval);$("bri").value=ctl.bright||100};
+  const sel=()=>{$("auto").checked=ctl.screen==="auto";for(const b of $("delays").children)b.classList.toggle("sel",+b.dataset.v===(+ctl.delay||0));$("fav").value=ctl.fav||"";$("favAl").checked=ctl.favAlerts!==false;for(const b of $("screens").children)b.classList.toggle("sel",ctl.screen===b.dataset.k);for(const b of $("ivals").children)b.classList.toggle("sel",+b.dataset.v===ctl.interval);$("bri").value=ctl.bright||100};
   onCtl=sel;
   $("screens").innerHTML=SCREENS.map(([k,l])=>`<button class="btn" data-k="${k}">${l}</button>`).join("");
   $("ivals").innerHTML=[10,20,30,60].map(v=>`<button class="chip" data-v="${v}">${v} s</button>`).join("");
+  $("delays").innerHTML=[0,15,30,45,60,90,120].map(v=>`<button class="chip" data-v="${v}">${v} s</button>`).join("");
+  $("delays").onclick=e=>{const b=e.target.closest("button");if(b)send({delay:+b.dataset.v},"Vertraging "+b.dataset.v+" s")};
+  const favOpts=()=>`<option value="">Geen</option>`+DATA.grid.filter(c=>DATA.drv[c]).map(c=>`<option value="${c}">${c} · ${DATA.drv[c][0].charAt(0)+DATA.drv[c][0].slice(1).toLowerCase()}</option>`).join("");
+  $("fav").innerHTML=favOpts();
+  $("fav").onchange=e=>send({fav:e.target.value||null},e.target.value?"Favoriet: "+e.target.value:"Geen favoriet");
+  $("favAl").onchange=e=>send({favAlerts:e.target.checked});
   let dur=10;$("durs").innerHTML=[[10,"10 s"],[30,"30 s"],[60,"60 s"],[0,"Tot stoppen"]].map(([v,l])=>`<button class="chip${v===dur?" sel":""}" data-v="${v}">${l}</button>`).join("");
   $("alerts").innerHTML=ALERTS.map(([k,l,c])=>`<button class="btn" data-k="${k}"><span class="dot" style="background:${c}"></span>${l}</button>`).join("");
   let tyre="M";$("tyres").innerHTML=[["S","Soft","#ff3a3a"],["M","Medium","#ffd21f"],["H","Hard","#ffffff"],["I","Inter","#28f08a"],["W","Wet","#3f8dff"]].map(([k,l])=>`<button class="chip${k===tyre?" sel":""}" data-v="${k}">${l}</button>`).join("");

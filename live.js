@@ -43,12 +43,24 @@ function merge(t, d) {
 }
 
 class LiveClient {
-  constructor(onUpdate, log = console.log) {
-    this.onUpdate = onUpdate; this.log = log;
+  constructor(onUpdate, log = console.log, getDelay = () => 0) {
+    this.onUpdate = onUpdate; this.log = log; this.getDelay = getDelay;
     this.ws = null; this.st = {}; this.connected = false; this.lastMsg = 0; this.error = ''; this.pingT = null; this.token = null;
+    this.q = []; this.initTopics = 0; this.flushT = null;
   }
+  // Berichten worden pas verwerkt na de ingestelde vertraging (zodat het display gelijk loopt met je stream)
+  flush() {
+    const lim = Date.now() - Math.max(0, +this.getDelay() || 0);
+    while (this.q.length && this.q[0][0] <= lim) {
+      const [, topic, data] = this.q.shift();
+      if (topic === '__init') { this.st = {}; for (const [k, v] of Object.entries(data || {})) this.st[k.replace(/\.z$/, '')] = v; this.onUpdate('init'); }
+      else { this.st[topic] = merge(this.st[topic], data); this.onUpdate(topic, data); }
+    }
+  }
+  pending() { return this.q.length; }
   async connect(token) {
-    this.close(); this.token = token; this.st = {}; this.error = '';
+    this.close(); this.token = token; this.st = {}; this.error = ''; this.q = [];
+    clearInterval(this.flushT); this.flushT = setInterval(() => this.flush(), 200);
     const h = { 'User-Agent': 'BestHTTP', Accept: '*/*' };
     if (token) h.Authorization = 'Bearer ' + token;
     const r = await fetch(LT + '/negotiate?negotiateVersion=1', { method: 'POST', headers: h, signal: AbortSignal.timeout(15000) });
@@ -81,18 +93,18 @@ class LiveClient {
           this.lastMsg = Date.now();
           if (m.type === 3 && m.invocationId === '1') {
             if (m.error) { this.error = m.error; fin(new Error(m.error)); continue; }
-            this.connected = true;
-            for (const [k, v] of Object.entries(m.result || {})) this.st[k.replace(/\.z$/, '')] = v;
-            fin(); this.onUpdate('init');
+            this.connected = true; this.initTopics = Object.keys(m.result || {}).length;
+            this.q.push([Date.now(), '__init', m.result || {}]);
+            fin();
           } else if (m.type === 1 && m.target === 'feed') {
             const [topic, data] = m.arguments || [];
-            if (topic) { this.st[topic] = merge(this.st[topic], data); this.onUpdate(topic, data); }
+            if (topic) this.q.push([Date.now(), topic, data]);
           } else if (m.type === 7) { this.error = m.error || 'Server sloot de verbinding'; }
         }
       };
     });
   }
-  close() { clearInterval(this.pingT); if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} } this.connected = false; }
+  close() { clearInterval(this.pingT); clearInterval(this.flushT); this.q = []; if (this.ws) { const w = this.ws; this.ws = null; try { w.close(); } catch {} } this.connected = false; }
 }
 
 /* ---------- samenvatting voor het display ---------- */
@@ -101,7 +113,7 @@ const SESS = { 'Practice 1': 'FP1', 'Practice 2': 'FP2', 'Practice 3': 'FP3', Qu
 const vals = x => Array.isArray(x) ? x.filter(Boolean) : x && typeof x === 'object' ? Object.keys(x).sort((a, b) => a - b).map(k => x[k]).filter(Boolean) : [];
 const val = x => x && typeof x === 'object' ? (x.Value || '') : (x || '');
 
-function summarize(st, drvMap = {}) {
+function summarize(st, drvMap = {}, delayMs = 0) {
   const si = st.SessionInfo || {}, lines = (st.TimingData || {}).Lines || {}, app = (st.TimingAppData || {}).Lines || {}, dl = st.DriverList || {};
   const name = si.Name || '', type = si.Type || '';
   const mode = /Race|^Sprint$/.test(type) && !/Qualifying|Shootout/.test(name) ? 'race' : /Qualifying|Shootout/.test(name + type) ? 'quali' : 'practice';
@@ -120,14 +132,14 @@ function summarize(st, drvMap = {}) {
     const flag = d.CountryCode || (drvMap[code] && drvMap[code][1]) || '';
     rows.push([pos, code, d.TeamColour ? '#' + d.TeamColour : '', flag, mode === 'race' && grid ? grid - pos : null,
       l.Retired || l.Stopped ? 'OUT' : l.InPit ? 'PIT' : gap, (last.Compound || '').charAt(0), +last.TotalLaps || 0, +l.NumberOfLaps || 0,
-      up(d.LastName || (drvMap[code] || [])[0] || code)]);
+      up(d.LastName || (drvMap[code] || [])[0] || code), stints.length, +l.NumberOfPitStops || 0]);
   }
   rows.sort((a, b) => a[0] - b[0]);
   const rc = vals((st.RaceControlMessages || {}).Messages), lastRc = rc[rc.length - 1];
   const lc = st.LapCount || {}, w = st.WeatherData || {}, ts = st.TrackStatus || {}, ss = st.SessionStatus || {}, clk = st.ExtrapolatedClock || {};
   let remaining = clk.Remaining || '';
   if (clk.Extrapolating && clk.Utc && remaining) {
-    const [h, m, s] = remaining.split(':').map(Number), left = Math.max(0, (h * 3600 + m * 60 + s) * 1000 - (Date.now() - Date.parse(clk.Utc)));
+    const [h, m, s] = remaining.split(':').map(Number), left = Math.max(0, (h * 3600 + m * 60 + s) * 1000 - (Date.now() - delayMs - Date.parse(clk.Utc)));
     const t = Math.floor(left / 1000); remaining = [Math.floor(t / 3600), Math.floor(t % 3600 / 60), t % 60].map(n => String(n).padStart(2, '0')).join(':');
   }
   return {
