@@ -119,7 +119,63 @@ async function of1(p) {
   if (!r.ok) throw new Error(`${p} -> HTTP ${r.status}`);
   return r.json();
 }
+/* F1.com archief (livetiming.formula1.com/static), vereist de subscriptionToken */
+const F1_STATIC = (process.env.F1_STATIC_URL || 'https://livetiming.formula1.com/static').replace(/\/$/, '');
+async function f1static(p) {
+  const r = await fetch(F1_STATIC + '/' + p, { headers: { Authorization: 'Bearer ' + config.token, 'User-Agent': 'BestHTTP', Accept: '*/*' }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) throw new Error(`F1.com ${p.split('/').slice(-2).join('/')} -> HTTP ${r.status}`);
+  const txt = (await r.text()).replace(/^\uFEFF/, '');
+  return JSON.parse(txt);
+}
+const offDate = (d, off) => { if (!d) return NaN; if (/[Zz]|[+-]\d\d:\d\d$/.test(d)) return Date.parse(d); const m = String(off || '+00:00:00').match(/^(-?)(\d+):(\d+)/); return Date.parse(d + (m ? (m[1] ? '-' : '+') + m[2].padStart(2, '0') + ':' + m[3] : 'Z')); };
+async function refreshSessionsF1() {
+  const year = (f1 && f1.season) || new Date().getUTCFullYear(), now = Date.now();
+  const idx = await f1static(`${year}/Index.json`);
+  const sess = [];
+  for (const m of idx.Meetings || []) for (const s of m.Sessions || []) {
+    const end = offDate(s.EndDate, s.GmtOffset), start = offDate(s.StartDate, s.GmtOffset);
+    if (s.Path && end + 10 * 60000 < now && s.Name !== 'Race' && !/Day \d/.test(s.Name) && (s.Key || 0) > 0) sess.push({ m, s, end, start });
+  }
+  if (!sess.length) return [];
+  sess.sort((a, b) => a.start - b.start);
+  const mk = sess[sess.length - 1].m.Key, list = [];
+  for (const { m, s, end, start } of sess.filter(x => x.m.Key === mk)) {
+    const key = 'f1-' + s.Key, old = (sessCache.list || []).find(x => x.key === key);
+    if (old && old.final) { list.push(old); continue; }
+    const [td, dl] = await Promise.all([f1static(s.Path + 'TimingData.json'), f1static(s.Path + 'DriverList.json').catch(() => ({}))]);
+    const race = /Race|^Sprint$/.test(s.Type) && s.Name !== 'Sprint Qualifying' && s.Name !== 'Sprint Shootout';
+    const v = x => x && typeof x === 'object' ? (x.Value || '') : (x || '');
+    const arr = x => Array.isArray(x) ? x : x && typeof x === 'object' ? Object.keys(x).sort((a, b) => a - b).map(k => x[k]) : [];
+    const rows = [];
+    for (const [num, l] of Object.entries(td.Lines || {})) {
+      const d = dl[num] || {}, code = d.Tla || num, known = f1 && f1.drv && f1.drv[code];
+      const bests = arr(l.BestLapTimes).map(v).filter(Boolean), stats = arr(l.Stats).map(x => x && x.TimeDiffToFastest).filter(Boolean);
+      const best = race ? '' : (bests[bests.length - 1] || v(l.BestLapTime));
+      let gap = race ? (l.GapToLeader || '') : (stats[stats.length - 1] || v(l.TimeDiffToFastest));
+      if (/^\d+L$/.test(gap)) gap = '+' + gap.replace('L', ' LAP');
+      rows.push([+l.Position || +l.Line || 99, code, d.TeamColour ? '#' + d.TeamColour : '', (known && known[1]) || d.CountryCode || '', best, gap,
+        +l.NumberOfLaps || 0, l.Retired && race ? 'DNF' : '', String(d.LastName || (known && known[0]) || code).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()]);
+    }
+    rows.sort((a, b) => a[0] - b[0]);
+    if (!rows.length) { if (old) list.push(old); continue; }
+    const race0 = f1 && f1.races.find(r => Math.abs(Date.parse(r[7].split(' ')[4] + ':00Z') - start) < 4 * 86400000);
+    list.push({ key, code: SNAME[s.Name] || String(s.Name).toUpperCase(), race, gp: race0 ? race0[1] : String(m.Name || '').toUpperCase().replace('GRAND PRIX', 'GP'),
+      end, rows, final: now - end > 3 * 3600000, src: 'F1.com' });
+  }
+  return list;
+}
 async function refreshSessions() {
+  sessCache.error = '';
+  if (tokenOk()) {
+    try {
+      const list = await refreshSessionsF1();
+      if (list.length) { sessCache = { list, source: 'F1.com', at: Date.now(), error: '' }; fs.writeFileSync(SESS_FILE, JSON.stringify(sessCache)); broadcast('data', pubData());
+        console.log(`[f1] sessie-uitslagen via F1.com: ${list.map(x => x.code).join(', ')} (${list[0].gp})`); return; }
+    } catch (e) { sessCache.error = e.message; console.error('[f1] F1.com-archief mislukt, val terug op OpenF1:', e.message); }
+  }
+  return refreshSessionsOpenF1();
+}
+async function refreshSessionsOpenF1() {
   const year = (f1 && f1.season) || new Date().getUTCFullYear(), now = Date.now();
   const all = await of1('/sessions?year=' + year);
   const done = all.filter(s => Date.parse(s.date_end || s.date_start) + 10 * 60000 < now && s.session_name !== 'Race' && !/Day \d/.test(s.session_name))
@@ -145,10 +201,10 @@ async function refreshSessions() {
     }).sort((a, b) => a[0] - b[0]);
     const t = Date.parse(s.date_start), race0 = f1 && f1.races.find(r => { const rt = Date.parse(r[7].split(' ')[4] + ':00Z'); return Math.abs(rt - t) < 4 * 86400000; });
     list.push({ key: s.session_key, code: SNAME[s.session_name] || s.session_name.toUpperCase(), race, gp: race0 ? race0[1] : String(s.location || s.country_name || '').toUpperCase(),
-      end: Date.parse(s.date_end || s.date_start), rows, final: now - Date.parse(s.date_end || s.date_start) > 3 * 3600000 });
+      src: 'OpenF1', end: Date.parse(s.date_end || s.date_start), rows, final: now - Date.parse(s.date_end || s.date_start) > 3 * 3600000 });
   }
-  if (!list.length) return;
-  sessCache = { meeting: mk, list };
+  if (!list.length) { sessCache.error = (sessCache.error ? sessCache.error + ' · ' : '') + 'OpenF1 heeft nog geen uitslagen van dit weekend'; console.log('[f1] OpenF1: nog geen uitslagen voor het huidige weekend'); return; }
+  sessCache = { meeting: mk, list, source: 'OpenF1', at: Date.now(), error: sessCache.error || '' };
   fs.writeFileSync(SESS_FILE, JSON.stringify(sessCache));
   broadcast('data', pubData());
   console.log(`[f1] sessie-uitslagen: ${list.map(x => x.code).join(', ')} (${list[0].gp})`);
@@ -340,7 +396,7 @@ function liveStatus() {
   let next = null;
   if (f1) for (const r of f1.races) { const t = r[7].split(' '); for (const x of t) { const s = Date.parse((x.length > 11 ? x : f1.season + '-' + x) + ':00Z'); if (s > Date.now()) { next = { gp: r[1], start: s }; break; } } if (next) break; }
   return { configured: !!config.token, valid: tokenOk(), exp: config.exp || null, product: config.product || '', subStatus: config.subStatus || '',
-    savedAt: config.savedAt || null, auto: { ...AUTO_DEF, ...(config.auto || {}) }, pinRequired: !!PIN,
+    savedAt: config.savedAt || null, results: { source: sessCache.source || '', at: sessCache.at || null, sessions: (sessCache.list || []).map(x => x.code), error: sessCache.error || '' }, auto: { ...AUTO_DEF, ...(config.auto || {}) }, pinRequired: !!PIN,
     live: { connected: live.connected, inWindow: !!w, session: liveSum ? `${liveSum.sess} ${liveSum.gp}` : '', status: liveSum ? liveSum.status : '',
       lastMsg: live.lastMsg || null, error: live.error || '' }, next };
 }
@@ -358,12 +414,16 @@ async function settingsApi(req, res, p) {
       const { token, info } = parseToken(body.value);
       if (info.exp && info.exp < Date.now()) return sendJson(res, 400, { error: 'Deze sessie is al verlopen. Log opnieuw in op formula1.com en kopieer de cookie opnieuw.' });
       config = { ...config, token, exp: info.exp, product: info.product, subStatus: info.status, savedAt: Date.now() }; saveConfig();
-      lastAttempt = 0; live.close(); liveTick();
+      lastAttempt = 0; live.close(); liveTick(); refreshSessions().catch(e => { sessCache.error = e.message; });
       return sendJson(res, 200, liveStatus());
     } catch (e) { return sendJson(res, 400, { error: e.message }); }
   }
   if (p === '/api/f1/logout') { live.close(); liveSum = null; broadcast('live', null); const { auto } = config; config = { auto }; saveConfig(); return sendJson(res, 200, liveStatus()); }
   if (p === '/api/f1/auto') { const a = {}; for (const k of Object.keys(AUTO_DEF)) if (k in (body.auto || {})) a[k] = !!body.auto[k]; config.auto = { ...(config.auto || {}), ...a }; saveConfig(); return sendJson(res, 200, liveStatus()); }
+  if (p === '/api/f1/results') {
+    try { await refreshSessions(); } catch (e) { sessCache.error = e.message; }
+    return sendJson(res, 200, liveStatus());
+  }
   if (p === '/api/f1/test') {
     if (!config.token) return sendJson(res, 400, { error: 'Nog geen F1-account gekoppeld.' });
     if (live.connected) return sendJson(res, 200, { ok: true, msg: 'Verbonden: live timing loopt al.' });

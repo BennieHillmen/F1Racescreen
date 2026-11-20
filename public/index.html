@@ -319,7 +319,7 @@ const drvInfo=code=>DATA.drv[code]||[code,"",""];
 function pages(n,per){return Math.max(1,Math.ceil(n/per))}
 const VIEW={
 sessions:{pages:()=>Math.max(1,(DATA.sessions||[]).reduce((n,s)=>n+pagesFor(s.rows,r=>r[1]),0)),draw(t,now,pg){const S=DATA.sessions||[];
-  if(!S.length){header("UITSLAG","TRAINING");text("NOG GEEN UITSLAGEN",W/2,44,C.white,1,"c");text("VERSCHIJNT NA AFLOOP",W/2,58,C.blue,1,"c");text("VAN ELKE SESSIE",W/2,70,C.blue,1,"c");footer("BRON: OPENF1",t,C.cyan);return}
+  if(!S.length){header("UITSLAG","TRAINING");text("NOG GEEN UITSLAGEN",W/2,44,C.white,1,"c");text("VERSCHIJNT NA AFLOOP",W/2,58,C.blue,1,"c");text("VAN ELKE SESSIE",W/2,70,C.blue,1,"c");footer("BRON: F1.COM OF OPENF1",t,C.cyan);return}
   let k=pg,s=S[0];for(const x of S){const n=pagesFor(x.rows,r=>r[1]);if(k<n){s=x;break}k-=n}
   const P=pageRows(s.rows,k,r=>r[1]),q=s.code==="QUALI"||s.code==="SPRINT Q";header(s.code,P.a+"-"+P.b);text(s.gp,2,15,C.cyan);text("UITSLAG",W-3,15,C.white,1,"r");
   text("P",2,25,C.blue);text("DRV",31,25,C.blue);text(s.race?"TIME":"BEST",56,25,C.blue);text("GAP",108,25,C.blue);text("LAPS",W-3,25,C.blue,1,"r");
