@@ -86,7 +86,7 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,a:focus-visible{
 <script>
 {
 const $=id=>document.getElementById(id);
-const AUTO=[["sc","Safety car"],["vsc","Virtual safety car"],["red","Rode vlag"],["green","Groene vlag","Na safety car, VSC of rode vlag"],["yellow","Gele vlag","Komt vaak voor"],["start","Lights out","Bij de start van de race"],["finish","Finishvlag"],["overtake","Inhaalacties","Top 10, tijdens de race"]];
+const AUTO=[["sc","Safety car"],["vsc","Virtual safety car"],["red","Rode vlag"],["green","Groene vlag","Na safety car, VSC of rode vlag"],["yellow","Gele vlag","Komt vaak voor"],["start","Lights out","Bij de start van de race"],["finish","Finishvlag"],["overtake","Inhaalacties","Top 10, tijdens de race"],["pit","Pitstops","Top 10, met nieuwe band en tijd in de pitstraat"],["fastest","Snelste ronde","In de race; in Q3 de voorlopige pole"],["knockout","Afvallers kwalificatie","Wie er na Q1 en Q2 uit ligt"]];
 const fmt=t=>t?new Date(t).toLocaleString("nl-NL",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"–";
 let st=null;
 function render(s){st=s;$("pinWrap").hidden=!s.pinRequired;const L=s.live;let lamp="",title,text;

@@ -321,12 +321,12 @@ const VIEW={
 live:{pages:()=>LIVE&&LIVE.rows&&LIVE.rows.length?pagesFor(LIVE.rows,r=>r[1]):1,draw(t,now,pg){
   if(!LIVE||!LIVE.rows||!LIVE.rows.length){header("LIVE","");text("GEEN LIVE SESSIE",W/2,36,C.white,1,"c");const s=nextSession(now);if(s){text("VOLGENDE "+SESS[s.code],W/2,54,C.blue,1,"c");text(s.race[1],W/2,66,C.blue,1,"c");text(dayHm(s.start),W/2,78,C.white,1,"c")}footer("LIVE DATA VIA JE F1-ACCOUNT  -  ZIE INSTELLINGEN",t,C.cyan);return}
   const L=LIVE,race=L.mode==="race",P=pageRows(L.rows,pg,r=>r[1]);
-  header(L.status==="Finished"||L.status==="Finalised"?"FINISH":"LIVE",race&&L.lap&&L.lap[1]?"L"+L.lap[0]+"/"+L.lap[1]:(L.remaining||""));
+  header(L.status==="Finished"||L.status==="Finalised"?"FINISH":"LIVE",race&&L.lap&&L.lap[1]?"L"+L.lap[0]+"/"+L.lap[1]:((L.mode==="quali"&&L.part?"Q"+L.part+" ":"")+(L.remaining||"")));
   text(L.gp||"",2,15,C.cyan);text(L.sess||"",W-3,15,C.white,1,"r");
   const gx=race?86:56;text("P",2,25,C.blue);text("DRV",31,25,C.blue);if(race)text("+/-",56,25,C.blue);text(race?"INT":L.mode==="quali"?"BEST":"GAP",gx,25,C.blue);text("TYRE",W-3,25,C.blue,1,"r");
   const TY={S:C.red,M:C.yellow,H:C.white,I:C.green,W:C.blue};
   P.rows.forEach(([r],i)=>{const y=35+i*14,[pos,code,col,fl,dl,gap,ty,tl]=r,info=drvInfo(code);rowBg(i,y,code);
-   text(p2(pos),2,y+3,C.white);rect(15,y+2,2,9,col||tc(info[2]));flag(fl||info[1],19,y+3);text(code,31,y+3,C.white);
+   const cut=L.cutoff||0,ko=r[12];text(p2(pos),2,y+3,ko?C.grey:cut&&pos>cut?C.red:C.white);if(cut&&pos===cut)hline(y+13,C.red);rect(15,y+2,2,9,col||tc(info[2]));flag(fl||info[1],19,y+3);text(code,31,y+3,C.white);
    if(race&&dl!=null)text(dl>0?"+"+dl:dl<0?String(dl):"0",56,y+3,dl>0?C.green:dl<0?C.red:C.grey);
    const g=String(gap||"").slice(0,9);text(g,gx,y+3,g==="PIT"?C.yellow:g==="OUT"?C.grey:C.white);
    if(ty){text(ty,148,y+3,TY[ty]||C.white);text(tl,W-3,y+3,C.white,1,"r")}});
@@ -405,9 +405,12 @@ function drawAlert(a,t){const lap=a.lap?"LAP "+a.lap:"";
     hline(104,C.blue);if(a.passed)text("PASSED "+(a.passedName||drvInfo(a.passed)[0]),2,110,C.blue);break}
   case"lost":{header("POSITION LOST","",C.red,C.red);const nm=a.name||drvInfo(a.driver)[0];text(nm,6,24,C.white,tw(nm,2)>W-8?1:2);text("~ P"+a.pos,14,56,C.red,2);rect(14+tw("~ P"+a.pos,2)+8,60,14,7,a.colour||tc(drvInfo(a.driver)[2]));hline(104,C.red);if(a.byName)text("PASSED BY "+a.byName,2,110,C.red);break}
   case"pit":{header("PIT STOP","",C.yellow,C.yellow);text(a.name||drvInfo(a.driver)[0],W/2,30,C.white,2,"c");const TY={S:["SOFT",C.red],M:["MEDIUM",C.yellow],H:["HARD",C.white],I:["INTER",C.green],W:["WET",C.blue]}[a.tyre];
-    if(!TY){text(a.stops?"STOP "+a.stops:"IN DE PITS",W/2,60,C.yellow,2,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
-    text("NAAR",W/2-40,62,C.grey,1,"r");text(TY[0],W/2-28,58,TY[1],2);hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
-  case"fastest":{header("FASTEST LAP","",C.purple,C.purple);text(drvInfo(a.driver)[0],W/2,30,C.white,2,"c");if(a.time)text(a.time,W/2,58,C.purple,2,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
+    const pft=(a.pos?"P"+a.pos+"  ":"")+(a.stops?"STOP "+a.stops+"  ":"")+(a.pitlane?"PITLANE "+a.pitlane+"S":"")||lap;
+    if(!TY){text(a.stops?"STOP "+a.stops:"IN DE PITS",W/2,60,C.yellow,2,"c");hline(106,C.blue);text(pft,2,110,C.white);break}
+    text("NAAR",W/2-40,62,C.grey,1,"r");text(TY[0],W/2-28,58,TY[1],2);hline(106,C.blue);text(pft,2,110,C.white);break}
+  case"pole":{header("PROVISIONAL POLE","",C.purple,C.purple);const nm=a.name||drvInfo(a.driver)[0];text(nm,W/2,30,C.white,tw(nm,2)>W-8?1:2,"c");if(a.time)text(a.time,W/2,58,C.purple,2,"c");rect(W/2-20,82,40,3,a.colour||tc(drvInfo(a.driver)[2]));hline(106,C.blue);text("Q3",2,110,C.white);break}
+  case"ko":{header("KNOCKED OUT","",C.red,C.red);const d=(a.drivers||[]).slice(0,6);for(let i=0;i<d.length;i+=3)text(d.slice(i,i+3).join(" "),W/2,30+(i/3)*26,C.white,2,"c");hline(106,C.red);text("EINDE Q"+(a.part||1),2,110,C.red);break}
+  case"fastest":{header("FASTEST LAP","",C.purple,C.purple);text(a.name||drvInfo(a.driver)[0],W/2,30,C.white,2,"c");if(a.time)text(a.time,W/2,58,C.purple,2,"c");hline(106,C.blue);if(lap)text(lap,2,110,C.white);break}
   case"msg":{header("BERICHT","",C.cyan,C.cyan);const words=norm(a.text||"").split(/\s+/).filter(Boolean),lines=[];let cur="";for(const w of words){const n=cur?cur+" "+w:w;if(n.length>14&&cur){lines.push(cur);cur=w}else cur=n}if(cur)lines.push(cur);
     const L=lines.slice(0,4),y0=58-L.length*10;L.forEach((l,i)=>text(l.slice(0,14),W/2,y0+i*20,C.white,2,"c"));break}
   }}

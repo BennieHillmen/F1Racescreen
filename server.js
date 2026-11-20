@@ -119,13 +119,14 @@ setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 25000);
 
 
 /* ---------- F1.com live timing (alleen met ingesteld account) ---------- */
-const AUTO_DEF = { sc: true, vsc: true, red: true, green: true, yellow: false, start: true, finish: true, overtake: true };
+const AUTO_DEF = { sc: true, vsc: true, red: true, green: true, yellow: false, start: true, finish: true, overtake: true, pit: true, fastest: true, knockout: true };
 const DURS = { FP1: 60, FP2: 60, FP3: 60, SQ: 44, SPR: 60, Q: 60, R: 120 };
 const delayMs = () => Math.min(300, Math.max(0, +((state || {}).delay) || 0)) * 1000;
 const live = new LiveClient(onLive, console.log, delayMs);
 const sumNow = () => summarize(live.st, f1 && f1.drv, delayMs());
 let liveSum = null, sumTimer = null, connecting = false, lastAttempt = 0;
-let prevTrack = null, prevStatus = null, prevPos = null, lastOT = 0, lastFav = 0, prevStints = null;
+let prevTrack = null, prevStatus = null, prevPos = null, lastOT = 0, lastFav = 0, prevStints = null, lastFL = 0, koBuf = [], koT = null;
+const pitLane = num => { const p = ((live.st.PitLaneTimeCollection || {}).PitTimes || {})[num]; return p && p.Duration ? String(p.Duration) : ''; };
 
 function pubData() {
   if (!f1) return null;
@@ -195,7 +196,7 @@ function storeLiveResult(sum) {
   broadcast('data', pubData());
   console.log(`[live] uitslag ${sum.sess} opgeslagen`);
 }
-function onLive(topic) {
+function onLive(topic, data) {
   const st = live.st;
   if (topic === 'init') {
     prevTrack = String((st.TrackStatus || {}).Status || ''); prevStatus = (st.SessionStatus || {}).Status || '';
@@ -220,16 +221,32 @@ function onLive(topic) {
     }
   } else if (topic === 'TimingAppData') {
     const fav = state && state.fav, sum = sumNow();
-    if (fav && sum.mode === 'race' && prevStints) {
-      const r = sum.rows.find(x => x[1] === fav);
-      if (r && prevStints[fav] != null && r[10] > prevStints[fav] && r[10] > 1) {
-        setTimeout(() => { const s2 = sumNow(), r2 = s2.rows.find(x => x[1] === fav) || r;
-          favAlert({ type: 'pit', driver: fav, name: r2[9], tyre: r2[6] || '', stops: r2[10] - 1, dur: 8 }); }, 2500);
+    if (sum.mode === 'race' && prevStints) {
+      for (const r of sum.rows) {
+        if (prevStints[r[1]] == null || !(r[10] > prevStints[r[1]]) || r[10] < 2) continue;
+        const isFav = r[1] === fav;
+        if (!isFav && r[0] > 10) continue;
+        setTimeout(() => { const s2 = sumNow(), r2 = s2.rows.find(x => x[1] === r[1]) || r;
+          const a = { type: 'pit', driver: r2[1], name: r2[9], tyre: r2[6] || '', stops: r2[10] - 1, pos: r2[0], pitlane: pitLane(r2[13]), colour: r2[2], dur: 8 };
+          if (isFav && state && state.favAlerts !== false) favAlert(a); else autoAlert('pit', a); }, 3000);
       }
       for (const x of sum.rows) prevStints[x[1]] = x[10];
     }
   } else if (topic === 'TimingData') {
-    const sum = sumNow();
+    const sum = sumNow(), lines = (st.TimingData || {}).Lines || {};
+    for (const [num, dl] of Object.entries((data && data.Lines) || {})) {
+      const full = lines[num] || {}, r = sum.rows.find(x => x[13] === num);
+      if (!r) continue;
+      if (dl.LastLapTime && dl.LastLapTime.OverallFastest === true && full.LastLapTime && full.LastLapTime.Value) {
+        if (sum.mode === 'race' && sum.lap[0] >= 3 && Date.now() - lastFL > 8000) { lastFL = Date.now(); autoAlert('fastest', { type: 'fastest', driver: r[1], name: r[9], time: full.LastLapTime.Value, colour: r[2], dur: 7 }); }
+        else if (sum.mode === 'quali' && sum.part >= 3 && Date.now() - lastFL > 4000) { lastFL = Date.now(); autoAlert('fastest', { type: 'pole', driver: r[1], name: r[9], time: full.LastLapTime.Value, colour: r[2], dur: 8 }); }
+      }
+      if (dl.KnockedOut === true && sum.mode === 'quali' && !koBuf.includes(r[1])) {
+        koBuf.push(r[1]); clearTimeout(koT);
+        koT = setTimeout(() => { const s2 = sumNow(), order = s2.rows.filter(x => koBuf.includes(x[1])).map(x => x[1]);
+          autoAlert('knockout', { type: 'ko', drivers: order.length ? order : koBuf.slice(), part: Math.max(1, (s2.part || 2) - 1), dur: 12 }); koBuf = []; }, 5000);
+      }
+    }
     if (sum.mode === 'race' && sum.rows.length) {
       const pos = {}; for (const r of sum.rows) pos[r[1]] = r;
       const fav = state && state.fav, F = fav && pos[fav], PF = fav && prevPos && prevPos[fav];

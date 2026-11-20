@@ -3,7 +3,7 @@
 'use strict';
 const LT = (process.env.F1_LIVE_URL || 'https://livetiming.formula1.com/signalrcore').replace(/\/$/, '');
 const TOPICS = ['Heartbeat', 'SessionInfo', 'SessionStatus', 'TrackStatus', 'LapCount', 'TimingData', 'TimingAppData',
-  'DriverList', 'RaceControlMessages', 'WeatherData', 'ExtrapolatedClock'];
+  'DriverList', 'RaceControlMessages', 'WeatherData', 'ExtrapolatedClock', 'PitLaneTimeCollection'];
 const RS = '\x1e';
 
 /* ---------- token uit cookie of los ---------- */
@@ -132,9 +132,11 @@ function summarize(st, drvMap = {}, delayMs = 0) {
     const flag = d.CountryCode || (drvMap[code] && drvMap[code][1]) || '';
     rows.push([pos, code, d.TeamColour ? '#' + d.TeamColour : '', flag, mode === 'race' && grid ? grid - pos : null,
       l.Retired || l.Stopped ? 'OUT' : l.InPit ? 'PIT' : gap, (last.Compound || '').charAt(0), +last.TotalLaps || 0, +l.NumberOfLaps || 0,
-      up(d.LastName || (drvMap[code] || [])[0] || code), stints.length, +l.NumberOfPitStops || 0]);
+      up(d.LastName || (drvMap[code] || [])[0] || code), stints.length, +l.NumberOfPitStops || 0, !!l.KnockedOut, num]);
   }
   rows.sort((a, b) => a[0] - b[0]);
+  const tdAll = st.TimingData || {}, part = +tdAll.SessionPart || 0, ne = vals(tdAll.NoEntries).length ? (Array.isArray(tdAll.NoEntries) ? tdAll.NoEntries : vals(tdAll.NoEntries)) : [];
+  const cutoff = mode === 'quali' && part && ne[part] ? +ne[part] : 0;
   const rc = vals((st.RaceControlMessages || {}).Messages), lastRc = rc[rc.length - 1];
   const lc = st.LapCount || {}, w = st.WeatherData || {}, ts = st.TrackStatus || {}, ss = st.SessionStatus || {}, clk = st.ExtrapolatedClock || {};
   let remaining = clk.Remaining || '';
@@ -146,7 +148,7 @@ function summarize(st, drvMap = {}, delayMs = 0) {
     gp: up((si.Meeting || {}).Name || '').replace('GRAND PRIX', 'GP'), sess: SESS[name] || up(name), mode, status: ss.Status || '',
     track: { code: String(ts.Status || ''), msg: ts.Message || '' }, lap: [+lc.CurrentLap || 0, +lc.TotalLaps || 0], remaining,
     weather: { air: w.AirTemp || '', track: w.TrackTemp || '', rain: w.Rainfall === '1' || w.Rainfall === 1 },
-    rcm: lastRc ? { text: up(lastRc.Message || ''), utc: lastRc.Utc || '' } : null, rows,
+    rcm: lastRc ? { text: up(lastRc.Message || ''), utc: lastRc.Utc || '' } : null, rows, part, cutoff,
   };
 }
 
