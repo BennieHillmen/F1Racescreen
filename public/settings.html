@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>F1-account koppelen</title>
+<link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: rustig instellingenscherm van de race-display app.
+   IDEA: het instellingenmenu van de companion-app (zoals op de iPhone-foto).
+   PICTURE: een grote statuskaart met verbindingslampje bovenaan.
+   COLOUR and TYPE: grafiet met signaalgroen, Titillium Web.
+   LAYOUT: één kolom, status → koppelen → meldingen → onderhoud. */
+:root{color-scheme:dark;--bg:#0c0d10;--card:#16181d;--card2:#1e2128;--ink:#f1f3f6;--mute:#8d93a0;--acc:#19d46b;--accInk:#04210f;--line:#2a2e37;--warn:#ffb020;--bad:#ff5a5a}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Titillium Web",system-ui,sans-serif}
+main{max-width:620px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) 16px max(40px,env(safe-area-inset-bottom))}
+a{color:var(--acc)}
+.back{display:inline-flex;align-items:center;min-height:44px;text-decoration:none;font-weight:600}
+h1{font-size:34px;line-height:1.05;margin:4px 0 6px}
+.lead{color:var(--mute);margin:0 0 14px}
+.card{background:var(--card);border-radius:18px;padding:18px;margin-top:14px}
+.card h2{font-size:20px;margin:0 0 8px}
+.card h2::after{content:"";display:block;width:34px;height:3px;background:var(--acc);border-radius:2px;margin-top:6px}
+.status{display:flex;gap:14px;align-items:flex-start}
+.lamp{width:16px;height:16px;border-radius:50%;background:#555;flex:none;margin-top:7px}
+.lamp.ok{background:var(--acc);box-shadow:0 0 12px var(--acc)}.lamp.warn{background:var(--warn)}.lamp.bad{background:var(--bad)}
+.status b{font-size:20px;display:block;line-height:1.25}
+.status p{margin:4px 0 0;color:var(--mute)}
+dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:14px 0 0;font-size:15px}
+dt{color:var(--mute)}dd{margin:0}
+ol{padding-left:20px;margin:6px 0 12px}ol li{margin:6px 0}
+code{background:var(--card2);padding:1px 6px;border-radius:6px;font-size:14px;overflow-wrap:anywhere}
+label{display:block;font-size:14px;color:var(--mute);margin:10px 0 4px}
+textarea,input[type=password]{width:100%;font:15px ui-monospace,Menlo,monospace;color:var(--ink);background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:46px}
+textarea{min-height:110px;resize:vertical}
+.btn{font:700 16px "Titillium Web",sans-serif;border:0;border-radius:12px;min-height:48px;padding:0 18px;cursor:pointer;background:var(--card2);color:var(--ink)}
+.btn.go{background:var(--acc);color:var(--accInk)}.btn.stop{background:#3a1717;color:#ff8a8a}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.tog{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;border-top:1px solid var(--line)}
+.tog:first-of-type{border-top:0}
+.tog span small{display:block;color:var(--mute);font-size:13px}
+.sw{appearance:none;width:52px;height:32px;border-radius:999px;background:#3a3f4a;position:relative;flex:none;margin:0;cursor:pointer}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%;background:#fff;transition:transform .2s}
+.sw:checked{background:var(--acc)}.sw:checked::after{transform:translateX(20px)}
+.msg{margin-top:10px;font-weight:600;min-height:1.5em}.msg.ok{color:var(--acc)}.msg.bad{color:var(--bad)}
+.note{color:var(--mute);font-size:14px}
+button:focus-visible,textarea:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./#remote">‹ Afstandsbediening</a>
+  <h1>F1-account en live data</h1>
+  <p class="lead">Met je F1-account haalt de server live timing op bij F1.com. Zonder account blijft het display werken zoals nu.</p>
+
+  <section class="card" aria-live="polite">
+    <div class="status"><span class="lamp" id="lamp"></span><div><b id="sTitle">Status laden…</b><p id="sText"></p></div></div>
+    <dl id="sList"></dl>
+  </section>
+
+  <section class="card">
+    <h2>Account koppelen</h2>
+    <p class="note">F1.com laat inloggen met e-mail en wachtwoord vanaf een server niet toe (beveiliging met captcha). Daarom koppel je je account met de inlogcookie van je browser. Doe dit op een computer.</p>
+    <ol>
+      <li>Log in op <a href="https://account.formula1.com/#/nl/login" target="_blank" rel="noopener">account.formula1.com</a>.</li>
+      <li>Open de ontwikkelaarstools (F12) en ga naar <b>Application</b> (Chrome/Edge) of <b>Opslag</b> (Firefox) › <b>Cookies</b> › <code>https://account.formula1.com</code> of <code>https://www.formula1.com</code>.</li>
+      <li>Kopieer de volledige <b>waarde</b> van de cookie <code>login-session</code>.</li>
+      <li>Plak die hieronder en klik op Koppelen.</li>
+    </ol>
+    <label for="val">Waarde van login-session (of de subscriptionToken)</label>
+    <textarea id="val" spellcheck="false" autocomplete="off" placeholder="%7B%22data%22%3A%7B%22subscriptionToken%22%3A%22eyJ…"></textarea>
+    <div id="pinWrap" hidden><label for="pin">Pincode van de server</label><input type="password" id="pin" inputmode="numeric" autocomplete="off"></div>
+    <div class="row"><button class="btn go" id="save">Koppelen</button><button class="btn" id="test">Verbinding testen</button><button class="btn stop" id="logout">Ontkoppelen</button></div>
+    <div class="msg" id="msg" role="status"></div>
+    <p class="note">De sessie is meestal ongeveer een week geldig. Daarna koppel je opnieuw; tot die tijd valt het display terug op de gewone gegevens. Volledige live data vraagt een F1 TV-abonnement.</p>
+  </section>
+
+  <section class="card">
+    <h2>Automatische meldingen</h2>
+    <p class="note">Tijdens een live sessie zet de server deze meldingen zelf op het display.</p>
+    <div id="auto"></div>
+  </section>
+</main>
+<script>
+{
+const $=id=>document.getElementById(id);
+const AUTO=[["sc","Safety car"],["vsc","Virtual safety car"],["red","Rode vlag"],["green","Groene vlag","Na safety car, VSC of rode vlag"],["yellow","Gele vlag","Komt vaak voor"],["start","Lights out","Bij de start van de race"],["finish","Finishvlag"],["overtake","Inhaalacties","Top 10, tijdens de race"]];
+const fmt=t=>t?new Date(t).toLocaleString("nl-NL",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"–";
+let st=null;
+function render(s){st=s;$("pinWrap").hidden=!s.pinRequired;const L=s.live;let lamp="",title,text;
+  if(!s.configured){title="Niet gekoppeld";text="Het display toont de gewone gegevens (kalender, standen en uitslagen) en jouw handmatige meldingen."}
+  else if(!s.valid){lamp="bad";title="Sessie verlopen";text="Koppel opnieuw met een verse login-session cookie. Tot dan toont het display de gewone gegevens."}
+  else if(L.connected){lamp="ok";title="Live verbonden";text=L.session?("Ontvangt "+L.session.toLowerCase()+(L.status?" ("+L.status+")":"")):"Verbonden met F1 live timing."}
+  else if(L.error&&L.inWindow){lamp="bad";title="Verbinden mislukt";text=L.error}
+  else{lamp="warn";title="Gekoppeld, wacht op sessie";text=s.next?"De verbinding start 20 minuten voor "+s.next.gp.toLowerCase()+" ("+fmt(s.next.start)+").":"De verbinding start vlak voor de volgende sessie."}
+  $("lamp").className="lamp "+lamp;$("sTitle").textContent=title;$("sText").textContent=text;
+  const items=s.configured?[["Abonnement",(s.product||"onbekend")+(s.subStatus?" · "+s.subStatus:"")],["Geldig tot",fmt(s.exp)],["Gekoppeld op",fmt(s.savedAt)],["Laatste data",L.lastMsg?fmt(L.lastMsg):"–"]]:[];
+  $("sList").innerHTML=items.map(([a,b])=>`<dt>${a}</dt><dd>${String(b).replace(/</g,"&lt;")}</dd>`).join("");
+  $("auto").innerHTML=AUTO.map(([k,l,h])=>`<label class="tog" style="margin:0;color:var(--ink);font-size:16px"><span>${l}${h?`<small>${h}</small>`:""}</span><input type="checkbox" class="sw" data-k="${k}" ${s.auto[k]?"checked":""}></label>`).join("");
+  $("logout").hidden=!s.configured;$("test").hidden=!s.configured}
+function say(m,ok){const e=$("msg");e.textContent=m;e.className="msg "+(ok?"ok":"bad")}
+async function call(p,body){const r=await fetch("api/f1/"+p,{method:body?"POST":"GET",headers:{"Content-Type":"application/json"},body:body?JSON.stringify({...body,pin:$("pin").value}):undefined});let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||("Fout "+r.status));return j}
+async function load(){try{render(await call("status"))}catch(e){$("sTitle").textContent="Server niet bereikbaar";$("lamp").className="lamp bad"}}
+$("save").onclick=async()=>{const v=$("val").value.trim();if(!v){say("Plak eerst de waarde van de cookie.");return}say("Bezig…",true);try{render(await call("login",{value:v}));$("val").value="";say("Gekoppeld. Live data start rond de volgende sessie.",true)}catch(e){say(e.message)}};
+$("test").onclick=async()=>{say("Testen…",true);try{const j=await call("test",{});say(j.msg,true)}catch(e){say(e.message)}load()};
+$("logout").onclick=async()=>{try{render(await call("logout",{}));say("Ontkoppeld. Het display toont weer de gewone gegevens.",true)}catch(e){say(e.message)}};
+$("auto").onchange=async e=>{const k=e.target.dataset.k;if(!k)return;try{render(await call("auto",{auto:{[k]:e.target.checked}}))}catch(x){say(x.message);load()}};
+load();setInterval(load,15000);
+}
+</script>
+</body>
+</html>

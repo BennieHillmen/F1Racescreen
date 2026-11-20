@@ -25,6 +25,15 @@ Tip voor de iPad: Safari > Deel > *Zet op beginscherm*, en zet Instellingen > Sc
 - De iPhone stuurt schermkeuze, alerts (safety car, vlaggen, inhaalacties, pitstops, berichten) en helderheid naar de iPad via de server (Server-Sent Events).
 - De laatste instellingen en gegevens worden bewaard in het volume `f1data`.
 
+## Live data van F1.com (optioneel)
+
+Open `http://IP-VAN-SERVER:8082/settings.html` (ook via de knop onderaan de afstandsbediening).
+Log op een computer in op formula1.com, kopieer de waarde van de cookie `login-session` en plak die op de instellingenpagina.
+Daarna verbindt de server rond elke sessie met F1 live timing: het display toont dan automatisch het live klassement
+(posities, gaten, banden, ronde, race control) en zet zelf meldingen neer (safety car, VSC, rode/groene vlag, start, finish, inhaalacties).
+Na de sessie komt de uitslag (ook van trainingen en kwalificatie) op het uitslagscherm.
+Zonder gekoppeld account, of als de sessie verlopen is (meestal na ongeveer een week), blijft alles werken zoals hiervoor.
+
 ## Instellingen (omgevingsvariabelen)
 
 | Variabele | Standaard | Uitleg |
@@ -33,6 +42,7 @@ Tip voor de iPad: Safari > Deel > *Zet op beginscherm*, en zet Instellingen > Sc
 | `REFRESH_MINUTES` | `10` | Hoe vaak F1-gegevens worden opgehaald |
 | `JOLPICA_URL` | `https://api.jolpi.ca/ergast/f1` | Bron voor de F1-gegevens |
 | `DATA_DIR` | `/data` | Map voor opgeslagen status |
+| `SETTINGS_PIN` | – | Pincode voor koppelen/ontkoppelen op de instellingenpagina |
 
 Direct verversen: `curl -X POST http://localhost:8082/api/refresh`
 

@@ -12,6 +12,8 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const API = (process.env.JOLPICA_URL || 'https://api.jolpi.ca/ergast/f1').replace(/\/$/, '');
 const REFRESH_MIN = Math.max(2, +process.env.REFRESH_MINUTES || 10);
 const PUB = path.join(__dirname, 'public');
+const { LiveClient, parseToken, tokenInfo, summarize } = require('./live');
+const PIN = process.env.SETTINGS_PIN || '';
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
@@ -19,6 +21,11 @@ const CACHE_FILE = path.join(DATA_DIR, 'f1data.json');
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 let state = readJson(STATE_FILE, null);
 let f1 = readJson(CACHE_FILE, null);
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const LIVERES_FILE = path.join(DATA_DIR, 'liveresult.json');
+let config = readJson(CONFIG_FILE, {});
+let liveResult = readJson(LIVERES_FILE, null);
+const saveConfig = () => fs.writeFileSync(CONFIG_FILE, JSON.stringify(config));
 
 /* ---------- vertaaltabellen ---------- */
 const NAT = { Italian: 'ITA', Dutch: 'NED', British: 'GBR', Monegasque: 'MON', Australian: 'AUS', French: 'FRA', 'New Zealander': 'NZL',
@@ -94,10 +101,10 @@ async function refresh() {
 
   const data = { updated: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC', season, standRound: dl ? +dl.round : 0,
     races, drivers: drivers.slice(0, 20), teams, drv, grid, records: RECORDS };
-  if (result) data.result = result;
+  if (result) { data.result = result; data.resultAt = Date.parse(`${race.date}T${race.time || '12:00:00Z'}`) + 2 * 3600000; }
   f1 = data;
   fs.writeFileSync(CACHE_FILE, JSON.stringify(f1));
-  broadcast('data', f1);
+  broadcast('data', pubData());
   console.log(`[f1] bijgewerkt: seizoen ${season}, ${races.length} races, stand na ronde ${data.standRound}`);
 }
 async function refreshLoop() {
@@ -110,6 +117,165 @@ const clients = new Set();
 function broadcast(ev, obj) { const msg = `event: ${ev}\ndata: ${JSON.stringify(obj)}\n\n`; for (const c of clients) c.write(msg); }
 setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 25000);
 
+
+/* ---------- F1.com live timing (alleen met ingesteld account) ---------- */
+const AUTO_DEF = { sc: true, vsc: true, red: true, green: true, yellow: false, start: true, finish: true, overtake: true };
+const DURS = { FP1: 60, FP2: 60, FP3: 60, SQ: 44, SPR: 60, Q: 60, R: 120 };
+const live = new LiveClient(onLive);
+let liveSum = null, sumTimer = null, connecting = false, lastAttempt = 0;
+let prevTrack = null, prevStatus = null, prevPos = null, lastOT = 0;
+
+function pubData() {
+  if (!f1) return null;
+  if (liveResult && liveResult.at > (f1.resultAt || 0)) return { ...f1, result: liveResult, drv: { ...(liveResult.drv || {}), ...f1.drv } };
+  return f1;
+}
+const tokenOk = () => !!(config.token && (!config.exp || config.exp > Date.now()));
+function sessionWindow(now) {
+  if (!f1) return null;
+  for (const r of f1.races) {
+    const codes = r[6] === 'S' ? ['FP1', 'SQ', 'SPR', 'Q', 'R'] : ['FP1', 'FP2', 'FP3', 'Q', 'R'];
+    const times = r[7].split(' ');
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i], start = Date.parse((t.length > 11 ? t : f1.season + '-' + t) + ':00Z'), end = start + DURS[codes[i]] * 60000;
+      if (now >= start - 20 * 60000 && now <= end + (codes[i] === 'R' ? 120 : 45) * 60000) return { race: r, code: codes[i], start, end };
+    }
+  }
+  return null;
+}
+async function liveTick() {
+  const want = tokenOk() && (process.env.LIVE_ALWAYS === '1' || sessionWindow(Date.now()));
+  if (!want) {
+    if (live.ws) { live.close(); console.log('[live] geen sessie bezig, verbinding gesloten'); }
+    if (liveSum) { liveSum = null; broadcast('live', null); }
+    return;
+  }
+  if (live.ws || connecting || Date.now() - lastAttempt < 20000) return;
+  connecting = true; lastAttempt = Date.now();
+  try { await live.connect(config.token); console.log('[live] verbonden met F1 live timing'); }
+  catch (e) { live.error = e.message; console.error('[live] verbinden mislukt:', e.message); }
+  connecting = false;
+}
+setInterval(liveTick, 15000);
+setTimeout(liveTick, 3000);
+
+function autoAlert(kind, a) {
+  const auto = { ...AUTO_DEF, ...(config.auto || {}) };
+  if (!auto[kind]) return;
+  const lap = +((live.st.LapCount || {}).CurrentLap) || null;
+  state = { ...(state || {}), alert: { lap, ...a, ts: Date.now(), auto: true } };
+  fs.writeFile(STATE_FILE, JSON.stringify(state), () => {});
+  broadcast('state', state);
+  console.log('[live] automatische melding:', a.type);
+}
+function storeLiveResult(sum) {
+  if (!sum || !sum.rows.length) return;
+  const lines = (live.st.TimingData || {}).Lines || {}, dl = live.st.DriverList || {};
+  const maxLaps = Math.max(0, ...sum.rows.map(r => r[8]));
+  const rows = sum.rows.map(r => {
+    const num = Object.keys(dl).find(n => dl[n].Tla === r[1]) || '', l = lines[num] || {};
+    let gap = sum.mode === 'race' ? (l.GapToLeader || '') : r[5];
+    if (/^\+?\d+L$/.test(gap)) gap = '';
+    const out = l.Retired || l.Stopped;
+    return [r[1], sum.mode === 'race' ? (r[4] != null ? r[0] + r[4] : 0) : 0, sum.mode === 'race' ? r[8] : maxLaps, gap === 'OUT' || gap === 'PIT' ? '' : gap, 0, 0, out ? 'DNF' : ''];
+  });
+  const extra = {}; for (const r of sum.rows) if (!(f1 && f1.drv && f1.drv[r[1]])) extra[r[1]] = [r[9], r[3], ''];
+  liveResult = { gp: sum.gp, sess: sum.sess, round: 0, laps: maxLaps, rows, drv: extra, at: Date.now() };
+  fs.writeFile(LIVERES_FILE, JSON.stringify(liveResult), () => {});
+  broadcast('data', pubData());
+  console.log(`[live] uitslag ${sum.sess} opgeslagen`);
+}
+function onLive(topic) {
+  const st = live.st;
+  if (topic === 'init') {
+    prevTrack = String((st.TrackStatus || {}).Status || ''); prevStatus = (st.SessionStatus || {}).Status || '';
+    prevPos = {}; for (const r of summarize(st, f1 && f1.drv).rows) prevPos[r[1]] = r;
+  } else if (topic === 'TrackStatus') {
+    const c = String((st.TrackStatus || {}).Status || '');
+    if (c !== prevTrack) {
+      const was = prevTrack; prevTrack = c;
+      if (c === '4') autoAlert('sc', { type: 'sc', dur: 15 });
+      else if (c === '6') autoAlert('vsc', { type: 'vsc', dur: 15 });
+      else if (c === '5') autoAlert('red', { type: 'red', dur: 20 });
+      else if (c === '2') autoAlert('yellow', { type: 'yellow', dur: 8 });
+      else if (c === '1' && ['4', '5', '6', '7'].includes(was)) autoAlert('green', { type: 'green', dur: 10 });
+    }
+  } else if (topic === 'SessionStatus') {
+    const s = (st.SessionStatus || {}).Status || '', sum = summarize(st, f1 && f1.drv);
+    if (s !== prevStatus) {
+      if (s === 'Started' && sum.mode === 'race' && prevStatus !== 'Aborted') autoAlert('start', { type: 'start', dur: 9 });
+      if (s === 'Finished') { autoAlert('finish', { type: 'chequered', dur: 20 }); storeLiveResult(sum); }
+      if (s === 'Finalised' || s === 'Ends') storeLiveResult(sum);
+      prevStatus = s;
+    }
+  } else if (topic === 'TimingData') {
+    const sum = summarize(st, f1 && f1.drv);
+    if (sum.mode === 'race' && sum.rows.length) {
+      const pos = {}; for (const r of sum.rows) pos[r[1]] = r;
+      if (prevPos && (st.SessionStatus || {}).Status === 'Started' && prevTrack === '1' && sum.lap[0] >= 2 && Date.now() - lastOT > 12000) {
+        for (const r of sum.rows) {
+          const was = prevPos[r[1]];
+          if (!was || r[0] > 10 || was[0] !== r[0] + 1 || r[5] === 'PIT' || was[5] === 'PIT') continue;
+          const other = sum.rows.find(o => o[0] === r[0] + 1 && prevPos[o[1]] && prevPos[o[1]][0] === r[0]);
+          if (!other || other[5] === 'PIT' || other[5] === 'OUT') continue;
+          lastOT = Date.now();
+          autoAlert('overtake', { type: 'overtake', driver: r[1], name: r[9], pos: r[0], passed: other[1], passedName: other[9], colour: r[2], dur: 7 });
+          break;
+        }
+      }
+      prevPos = pos;
+    }
+  }
+  if (!sumTimer) sumTimer = setTimeout(() => { sumTimer = null; publishLive(); }, 1000);
+}
+function publishLive() {
+  if (!live.connected) { if (liveSum) { liveSum = null; broadcast('live', null); } return; }
+  const sum = summarize(live.st, f1 && f1.drv);
+  sum.active = sum.rows.length > 0 && ['Started', 'Aborted', 'Finished', 'Suspended'].includes(sum.status);
+  sum.at = Date.now();
+  liveSum = sum; broadcast('live', sum);
+}
+setInterval(() => { if (live.connected) publishLive(); }, 5000);
+
+function liveStatus() {
+  const w = sessionWindow(Date.now());
+  let next = null;
+  if (f1) for (const r of f1.races) { const t = r[7].split(' '); for (const x of t) { const s = Date.parse((x.length > 11 ? x : f1.season + '-' + x) + ':00Z'); if (s > Date.now()) { next = { gp: r[1], start: s }; break; } } if (next) break; }
+  return { configured: !!config.token, valid: tokenOk(), exp: config.exp || null, product: config.product || '', subStatus: config.subStatus || '',
+    savedAt: config.savedAt || null, auto: { ...AUTO_DEF, ...(config.auto || {}) }, pinRequired: !!PIN,
+    live: { connected: live.connected, inWindow: !!w, session: liveSum ? `${liveSum.sess} ${liveSum.gp}` : '', status: liveSum ? liveSum.status : '',
+      lastMsg: live.lastMsg || null, error: live.error || '' }, next };
+}
+function readBody(req) {
+  return new Promise((res, rej) => { let b = ''; req.on('data', c => { b += c; if (b.length > 50000) req.destroy(); }); req.on('end', () => { try { res(b ? JSON.parse(b) : {}); } catch (e) { rej(e); } }); });
+}
+const sendJson = (res, code, obj) => res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
+async function settingsApi(req, res, p) {
+  if (p === '/api/f1/status' && req.method === 'GET') return sendJson(res, 200, liveStatus());
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST verwacht' });
+  let body; try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'Ongeldige invoer' }); }
+  if (PIN && String(body.pin || req.headers['x-pin'] || '') !== PIN) return sendJson(res, 403, { error: 'Onjuiste pincode' });
+  if (p === '/api/f1/login') {
+    try {
+      const { token, info } = parseToken(body.value);
+      if (info.exp && info.exp < Date.now()) return sendJson(res, 400, { error: 'Deze sessie is al verlopen. Log opnieuw in op formula1.com en kopieer de cookie opnieuw.' });
+      config = { ...config, token, exp: info.exp, product: info.product, subStatus: info.status, savedAt: Date.now() }; saveConfig();
+      lastAttempt = 0; live.close(); liveTick();
+      return sendJson(res, 200, liveStatus());
+    } catch (e) { return sendJson(res, 400, { error: e.message }); }
+  }
+  if (p === '/api/f1/logout') { live.close(); liveSum = null; broadcast('live', null); const { auto } = config; config = { auto }; saveConfig(); return sendJson(res, 200, liveStatus()); }
+  if (p === '/api/f1/auto') { const a = {}; for (const k of Object.keys(AUTO_DEF)) if (k in (body.auto || {})) a[k] = !!body.auto[k]; config.auto = { ...(config.auto || {}), ...a }; saveConfig(); return sendJson(res, 200, liveStatus()); }
+  if (p === '/api/f1/test') {
+    if (!config.token) return sendJson(res, 400, { error: 'Nog geen F1-account gekoppeld.' });
+    if (live.connected) return sendJson(res, 200, { ok: true, msg: 'Verbonden: live timing loopt al.' });
+    const t = new LiveClient(() => {}, () => {});
+    try { await t.connect(config.token); const n = Object.keys(t.st).length; t.close(); return sendJson(res, 200, { ok: true, msg: `Verbinding gelukt, ${n} datastromen ontvangen.` }); }
+    catch (e) { t.close(); return sendJson(res, 502, { error: 'Verbinding mislukt: ' + e.message }); }
+  }
+  return sendJson(res, 404, { error: 'onbekend' });
+}
+
 const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
 http.createServer((req, res) => {
@@ -118,7 +284,8 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write('retry: 3000\n\n');
     if (state) res.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
-    if (f1) res.write(`event: data\ndata: ${JSON.stringify(f1)}\n\n`);
+    if (f1) res.write(`event: data\ndata: ${JSON.stringify(pubData())}\n\n`);
+    if (liveSum) res.write(`event: live\ndata: ${JSON.stringify(liveSum)}\n\n`);
     clients.add(res); req.on('close', () => clients.delete(res));
     return;
   }
@@ -136,7 +303,8 @@ http.createServer((req, res) => {
   if (url.pathname === '/api/refresh' && req.method === 'POST') {
     refresh().then(() => res.writeHead(204).end(), e => res.writeHead(502).end(e.message)); return;
   }
-  if (url.pathname === '/api/data') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(f1 || {})); return; }
+  if (url.pathname === '/api/data') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(pubData() || {})); return; }
+  if (url.pathname.startsWith('/api/f1/')) { settingsApi(req, res, url.pathname).catch(e => sendJson(res, 500, { error: e.message })); return; }
   if (url.pathname === '/health') { res.writeHead(200).end('ok'); return; }
   let p = path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '');
   if (!p) p = 'index.html';

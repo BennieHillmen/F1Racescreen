@@ -10,6 +10,7 @@ services:
       - DATA_DIR=/data
       - REFRESH_MINUTES=10
       - TZ=Europe/Amsterdam
+      # - SETTINGS_PIN=1234   # optioneel: pincode voor de instellingenpagina
       - REPO_RAW=https://raw.githubusercontent.com/BennieHillmen/F1Racescreen/main
     command:
       - node
@@ -18,7 +19,13 @@ services:
         (async () => {
           const fs = require('fs');
           fs.mkdirSync('/app/public', { recursive: true });
-          for (const f of ['server.js', 'public/index.html', 'public/circuits.json']) {
+          let files = ['server.js', 'live.js', 'public/index.html', 'public/settings.html', 'public/circuits.json'];
+          try {
+            const m = await fetch(process.env.REPO_RAW + '/files.txt', { signal: AbortSignal.timeout(20000) });
+            if (m.ok) files = (await m.text()).split(/\r?\n/).map(x => x.trim()).filter(x => x && !x.startsWith('#') && !x.includes('..'));
+          } catch (e) { console.log('[setup] files.txt niet bereikbaar, standaardlijst'); }
+          for (const f of files) {
+            fs.mkdirSync(require('path').dirname('/app/' + f), { recursive: true });
             try {
               const r = await fetch(process.env.REPO_RAW + '/' + f, { signal: AbortSignal.timeout(20000) });
               if (!r.ok) throw new Error('HTTP ' + r.status);
