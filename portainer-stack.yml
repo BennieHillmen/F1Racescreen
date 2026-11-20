@@ -1,0 +1,16 @@
+# Portainer > Stacks > Add stack > Web editor
+# Vereist: image "f1-race-display:latest" (bouw die eerst via Images > Build a new image > Upload)
+services:
+  f1-race-display:
+    image: f1-race-display:latest
+    container_name: f1-race-display
+    ports:
+      - "8080:8080"
+    environment:
+      - REFRESH_MINUTES=10
+      - TZ=Europe/Amsterdam
+    volumes:
+      - f1data:/data
+    restart: unless-stopped
+volumes:
+  f1data:
